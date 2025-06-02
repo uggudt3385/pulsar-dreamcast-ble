@@ -60,3 +60,7 @@ Manually add using:
 rustup target add thumbv7em-none-eabihf
 rustup show
 ```
+### Useful links
+Website: https://www.nordicsemi.com/Products/Development-hardware/nRF52840-DK/Download
+DataSheet: https://www.mouser.com/datasheet/2/297/nRF52840_PS_v1.1-1623672.pdf
+Schematic: https://os.mbed.com/platforms/Nordic-nRF52840-DK/
