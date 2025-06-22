@@ -1,5 +1,7 @@
 # nrf52840 setup
 
+This project is currently using s140, it needs to be reflashed onto the chip when the chip is completely erased. 
+
 This is a basic setup of the nrf52840 DK following the example of this video
 
 https://youtu.be/TOAynddiu5M?si=5fiKa9r9CBKWlAwq
