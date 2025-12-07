@@ -1,7 +1,7 @@
 #[cfg(debug_assertions)]
 use nrf52840_dk_bsp::embedded_hal::timer;
 
-use crate::maple::{MaplePacket, bus::MapleBus};
+use crate::maple::{MaplePacket, traits::MapleBusTrait};
 use defmt_rtt as _;
 
 #[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
@@ -13,20 +13,22 @@ pub enum MapleState {
     Error,
 }
 
-pub struct MapleController {
+pub struct MapleController<'bus_lifetime, B: MapleBusTrait> {
     state: MapleState,
     last_transaction_time: u64,
+    bus: &'bus_lifetime mut B,
 }
 
-impl MapleController {
-    pub fn new() -> Self {
+impl<'bus_lifetime, B: MapleBusTrait> MapleController<'bus_lifetime, B> {
+    pub fn new(bus: &'bus_lifetime mut B) -> Self {
         Self {
             state: MapleState::Idle,
-            last_transaction_time: 0, //possibly change to now in the future.
+            last_transaction_time: 0,
+            bus,
         }
     }
 
-    pub fn step(&self, now_us: u64) {
+    pub fn step(&mut self, now_us: u64) {
         match self.state {
             MapleState::Idle => {
                 if self.detect_start_signal() {
@@ -49,7 +51,7 @@ impl MapleController {
             }
             MapleState::Responding => {
                 let packet = MaplePacket::default();
-                MapleBus::write(self, &packet, false, 0);
+                self.bus.write(&packet, false, 0);
                 self.next_state(MapleState::Idle);
             }
             MapleState::Error => {

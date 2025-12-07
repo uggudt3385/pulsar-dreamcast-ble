@@ -1,17 +1,18 @@
 use crate::maple::packet::MaplePacket;
+use defmt::Format;
 use heapless::{String, Vec};
 
 /// Number of u32 words for TX and RX buffer sizes (including framing + CRC)
 const MAX_PACKET_WORDS: usize = 258;
 
-#[derive(Debug)]
+#[derive(Debug, Format)]
 pub enum BusStatus {
     Idle,
     WriteInProgress,
     ReadInProgress,
     WriteComplete,
-    ReadComplete(Vec<u32, MAX_PACKET_WORDS>),
-    Error(String<64>),
+    ReadComplete(heapless::Vec<u32, MAX_PACKET_WORDS>),
+    Error(heapless::String<64>),
 }
 
 pub struct MapleBus {
@@ -65,6 +66,7 @@ impl MapleBus {
         autostart_read: bool,
         read_timeout_us: u64,
     ) -> bool {
+        let _ = packet;
         // Placeholder logic for now
         defmt::info!("Starting write to MapleBus");
         self.expecting_response = autostart_read;
@@ -96,7 +98,9 @@ impl MapleBus {
             BusPhase::ReadInProgress => {
                 if now_us > self.proc_kill_time {
                     self.state = BusPhase::Failed;
-                    BusStatus::Error("Timeout".into())
+                    let mut err = String::<64>::new();
+                    err.push_str("Timeout").ok();
+                    BusStatus::Error(err)
                 } else {
                     BusStatus::ReadInProgress
                 }
@@ -116,7 +120,9 @@ impl MapleBus {
             }
             BusPhase::Failed => {
                 self.state = BusPhase::Idle;
-                BusStatus::Error("General failure".into())
+                let mut err = String::<64>::new();
+                err.push_str("General failure").ok();
+                BusStatus::Error(err)
             }
         }
     }
