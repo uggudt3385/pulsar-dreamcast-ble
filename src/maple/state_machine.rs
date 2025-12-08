@@ -2,9 +2,9 @@
 use nrf52840_dk_bsp::embedded_hal::timer;
 
 use crate::maple::{MaplePacket, traits::MapleBusTrait};
-use defmt_rtt as _;
+// use defmt_rtt as _;
 
-#[derive(Debug, Clone, Copy, PartialEq, defmt::Format)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MapleState {
     Idle,
     WaitingForCommand,
@@ -90,6 +90,6 @@ impl<'bus_lifetime, B: MapleBusTrait> MapleController<'bus_lifetime, B> {
     }
 
     fn log_transaction(&self, prev: MapleState, next: MapleState, now_us: u64) {
-        defmt::info!("[{}]State transition: {:?} -> {:?}", now_us, prev, next);
+        // defmt::info!("[{}]State transition: {:?} -> {:?}", now_us, prev, next);
     }
 }

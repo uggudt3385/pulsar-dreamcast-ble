@@ -15,7 +15,7 @@ impl MapleBusTrait for MockMapleBus {
         let mut buffer = heapless::Vec::<u32, 258>::new();
         packet.encode(&mut buffer);
         for (i, word) in buffer.iter().enumerate() {
-            defmt::info!("MockBus TX Word[{}] = {=u32:X}", i, word);
+            // defmt::info!("MockBus TX Word[{}] = {=u32:X}", i, word);
         }
         true
     }

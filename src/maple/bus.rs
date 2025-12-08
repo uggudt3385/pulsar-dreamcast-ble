@@ -1,11 +1,11 @@
 use crate::maple::packet::MaplePacket;
-use defmt::Format;
+// use defmt::Format;
 use heapless::{String, Vec};
 
 /// Number of u32 words for TX and RX buffer sizes (including framing + CRC)
 const MAX_PACKET_WORDS: usize = 258;
 
-#[derive(Debug, Format)]
+#[derive(Debug)]
 pub enum BusStatus {
     Idle,
     WriteInProgress,
@@ -68,7 +68,7 @@ impl MapleBus {
     ) -> bool {
         let _ = packet;
         // Placeholder logic for now
-        defmt::info!("Starting write to MapleBus");
+        // defmt::info!("Starting write to MapleBus");
         self.expecting_response = autostart_read;
         self.response_timeout_us = read_timeout_us;
         self.state = BusPhase::WriteInProgress;
@@ -76,7 +76,7 @@ impl MapleBus {
     }
 
     pub fn start_read(&mut self, timeout_us: u64) -> bool {
-        defmt::info!("Starting read on MapleBus");
+        // defmt::info!("Starting read on MapleBus");
         self.response_timeout_us = timeout_us;
         self.state = BusPhase::WaitingForReadStart;
         true
