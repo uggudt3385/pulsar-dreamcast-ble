@@ -2,17 +2,17 @@
 #![no_main]
 
 use cortex_m::asm::nop;
-// nrf Dependencies
 use cortex_m_rt::entry;
 use nb::block;
 
 use panic_halt as _;
 
 use nrf52840_dk_bsp::{
-    Board,
     hal::{
         prelude::*,
         timer::{self, Timer},
+        gpio::{p0::Parts as P0Parts, Level},
+        pac,
     },
 };
 
@@ -20,101 +20,153 @@ use rtt_target::{rprintln, rtt_init_print};
 
 // Maple Dependencies
 mod maple;
-use crate::maple::{MockMapleBus, state_machine::MapleController, traits::MapleBusTrait};
-// use defmt_rtt as _;
-// use panic_probe as _;
+mod board;
+mod config;
+mod state;
 
-const MAX_DEVICES: usize = 1;
-
-const MAPLE_HOST_ADDRESSES: u8 = 0x00;
-
-fn monotonic() -> u64 {
-    0 // Replace with timer later
-}
-
-// defmt::timestamp!("{=u64}", monotonic());
+use crate::maple::{MapleBusGpio, MapleHost};
+use crate::maple::host::MapleResult;
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
-    rprintln!("Starting mock Maple bus cycle..");
+    rprintln!("Dreamcast Controller Adapter Starting...");
 
-    // Confirm LED flashing works
-    let mut board = Board::take().unwrap();
-    let mut timer = Timer::new(board.TIMER0);
+    // Take peripherals
+    let periph = pac::Peripherals::take().unwrap();
 
-    // // Test LED blinking first
-    for i in 0..2 {
-        rprintln!("Blink cycle: {}", i);
-        board.leds.led_1.enable(); // LED ON
-        delay(&mut timer, 250_000); // 250ms
-        board.leds.led_1.disable(); // LED OFF
-        board.leds.led_2.enable(); // LED ON
-        delay(&mut timer, 250_000); // 250ms
-        board.leds.led_2.disable(); // LED OFF
-        board.leds.led_3.enable(); // LED ON
-        delay(&mut timer, 250_000); // 250ms
-        board.leds.led_3.disable(); // LED OFF
-        board.leds.led_4.enable(); // LED ON
-        delay(&mut timer, 250_000); // 250ms
-        board.leds.led_4.disable(); // LED OFF
-        delay(&mut timer, 250_000);
+    // Set up GPIO
+    let p0 = P0Parts::new(periph.P0);
+
+    // Set up timer
+    let mut timer = Timer::new(periph.TIMER0);
+
+    // Set up LEDs (accent active low on DK)
+    let mut led1 = p0.p0_13.into_push_pull_output(Level::High).degrade();
+    let mut led2 = p0.p0_14.into_push_pull_output(Level::High).degrade();
+    let mut led3 = p0.p0_15.into_push_pull_output(Level::High).degrade();
+    let mut led4 = p0.p0_16.into_push_pull_output(Level::High).degrade();
+
+    // Blink LED1 to show we're starting
+    for _ in 0..3 {
+        led1.set_low();  // LED on
+        delay(&mut timer, 100_000);
+        led1.set_high(); // LED off
+        delay(&mut timer, 100_000);
     }
-    board.leds.led_1.enable(); // LED ON
 
-    // rprintln!("Blink complete. Proceeding to mock Maple bus logic.");
+    rprintln!("Setting up Maple Bus on P0.05 (SDCKA) and P0.06 (SDCKB)...");
 
-    // // Create a mock bus
-    // let mut bus = MockMapleBus::new();
+    // First, read the lines as inputs to see natural state from controller
+    let test_a = p0.p0_05.into_pullup_input();
+    let test_b = p0.p0_06.into_pullup_input();
+    delay(&mut timer, 10_000); // Let pull-ups settle
+    let a = test_a.is_high().unwrap_or(false);
+    let b = test_b.is_high().unwrap_or(false);
+    rprintln!("Initial bus state (as inputs): A={} B={}", a as u8, b as u8);
 
-    // // Create a controller with a reference to the bus
-    // let mut controller = MapleController::new(&mut bus);
+    // Set up Maple Bus GPIO pins as PUSH-PULL output
+    // SDCKA (Pin 1/Red) on P0.05 - idle HIGH
+    // SDCKB (Pin 5/White) on P0.06 - idle LOW
+    let sdcka = test_a.into_push_pull_output(Level::High).degrade();
+    let sdckb = test_b.into_push_pull_output(Level::Low).degrade();
 
-    // // Simulate a timestamp
-    // let now_us = 1000;
+    let mut bus = MapleBusGpio::new(sdcka, sdckb);
+    let host = MapleHost::new();
 
-    // // Step the controller (this will call next_state, write to bus, etc.)
-    // controller.step(now_us);
+    // Debug: Toggle pins to verify wiring
+    // If you have a multimeter/scope, check P0.05 and P0.06 are toggling
+    rprintln!("Debug: Toggling Maple Bus pins 5 times...");
+    for i in 0..5 {
+        bus.set_idle(); // SDCKA high, SDCKB low
+        delay(&mut timer, 500_000); // 500ms
 
-    // // Let the mock bus process its internal state (if applicable)
-    // let status = bus.process_events(now_us);
+        // Swap state
+        bus.send_start_pattern(); // This will toggle the lines
+        delay(&mut timer, 500_000); // 500ms
+        rprintln!("  Toggle {}", i);
+    }
+    bus.set_idle();
 
-    // rprintln!("Bus status after processing: {:?}", status);
+    rprintln!("Maple Bus initialized. Attempting to detect controller...");
+    let _ = led2.set_low(); // LED2 on = trying to communicate
 
-    // loop {
-    //     cortex_m::asm::wfi();
-    // }
-    let mut timeout_timer = Timer::new(board.TIMER1);
+    // Try to get device info
+    let (mut bus, result) = host.request_device_info(bus);
+
+    match &result {
+        MapleResult::Ok(info) => {
+            rprintln!("Controller detected!");
+            rprintln!("  Functions: 0x{:08X}", info.functions);
+            led2.set_high(); // LED2 off
+            led3.set_low();  // LED3 on = success
+        }
+        MapleResult::Timeout => {
+            rprintln!("No response from controller (timeout)");
+            led2.set_high();
+            led4.set_low(); // LED4 on = error
+        }
+        MapleResult::CrcError => {
+            rprintln!("CRC error in response");
+            led4.set_low();
+        }
+        MapleResult::UnexpectedResponse(cmd) => {
+            rprintln!("Unexpected response: 0x{:02X}", cmd);
+            led4.set_low();
+        }
+    }
+
+    // Set up button for manual trigger
+    let button1 = p0.p0_11.into_pullup_input();
+
+    rprintln!("Entering main loop...");
+    rprintln!("Press Button 1 on DK to send Device Info Request");
+
+    let mut poll_count = 0u32;
+    let mut last_button_state = false;
 
     loop {
-        // Poll button state
-        let pressed = board.buttons.button_2.is_pressed();
-        rprintln!("Button 2 pressed: {}", pressed);
+        // Check if button 1 is pressed (active low)
+        let button_pressed = button1.is_low().unwrap_or(false);
 
-        if pressed {
-            board.leds.led_2.enable(); // Turn on when button is pressed
-        } else {
-            board.leds.led_2.disable(); // Off otherwise
+        // Detect button press (falling edge)
+        if button_pressed && !last_button_state {
+            rprintln!("Button pressed - sending Device Info Request...");
+            let _ = led2.set_low(); // LED2 on
+
+            let (new_bus, result) = host.request_device_info(bus);
+            bus = new_bus;
+
+            match &result {
+                MapleResult::Ok(info) => {
+                    rprintln!("SUCCESS! Controller detected!");
+                    rprintln!("  Functions: 0x{:08X}", info.functions);
+                    let _ = led2.set_high();
+                    let _ = led3.set_low(); // LED3 on = success
+                    let _ = led4.set_high();
+                }
+                MapleResult::Timeout => {
+                    rprintln!("TIMEOUT - no response");
+                    let _ = led2.set_high();
+                    let _ = led3.set_high();
+                    let _ = led4.set_low(); // LED4 on = error
+                }
+                MapleResult::UnexpectedResponse(cmd) => {
+                    rprintln!("Got response but unexpected command: 0x{:02X}", cmd);
+                    let _ = led2.set_high();
+                    let _ = led4.set_low();
+                }
+                MapleResult::CrcError => {
+                    rprintln!("CRC error in response");
+                    let _ = led4.set_low();
+                }
+            }
         }
+        last_button_state = button_pressed;
 
-        //     timeout_timer.start(15_000_000u32); // microseconds
-        //     loop {
-        //         // Rapid blink LED4
-        //         board.leds.led_4.enable();
-        //         delay(&mut timer, 100_000); // 100ms
-        //         board.leds.led_4.disable();
-        //         delay(&mut timer, 100_000); // 100ms
-
-        //         // Exit after 15s
-        //         if block!(timeout_timer.wait()).is_ok() {
-        //             rprintln!("Timer expired, exiting blink loop.");
-        //             break;
-        //         }
-        //     }
-        // }
+        poll_count = poll_count.wrapping_add(1);
+        delay(&mut timer, 10_000); // 10ms debounce
         nop();
-        // // Sleep to reduce CPU usage between checks
-        delay(&mut timer, 50_000); // 50ms debounce delay
     }
 }
 

@@ -1,1 +1,1 @@
-pub mod controller;
+// State management module (placeholder)

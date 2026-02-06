@@ -46,8 +46,45 @@ monitor reset
 ```
 
 
-### RTT
-In .embeded.toml disable gd and halt_afterwards, then enable RTT
+### RTT (Real-Time Transfer)
+
+RTT lets you print debug messages from embedded code via `rprintln!()`.
+
+**Quick start:**
+```bash
+cargo embed --bin embedded_rust_setup
+```
+This flashes and opens RTT automatically. Output appears in terminal.
+
+**In code:**
+```rust
+use rtt_target::{rprintln, rtt_init_print};
+
+#[entry]
+fn main() -> ! {
+    rtt_init_print!();  // Initialize once at startup
+    rprintln!("Hello from embedded!");
+    loop { /* ... */ }
+}
+```
+
+**View RTT only (already flashed):**
+```bash
+probe-rs attach --chip nRF52840_xxAA target/thumbv7em-none-eabihf/debug/embedded_rust_setup
+```
+
+**Timing warning:** `rprintln!()` takes ~15µs. Don't use in timing-critical paths!
+
+**Troubleshooting - probe not found:**
+```bash
+ps aux | grep -iE 'jlink|probe-rs|nrf' | grep -v grep
+kill <pid>  # Kill any blocking processes
+```
+
+**Chip locked:**
+```bash
+probe-rs erase --chip nRF52840_xxAA --allow-erase-all
+```
 
 ### Installation
 

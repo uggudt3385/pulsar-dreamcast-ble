@@ -21,12 +21,14 @@ impl Default for MaplePacket {
 
 impl MaplePacket {
     /// Builds the 32-bit frame word used at the start of the packet.
+    /// Format: [length:8][sender:8][recipient:8][command:8]
+    /// Byte 0 = length, Byte 1 = sender, Byte 2 = recipient, Byte 3 = command
     pub fn frame_word(&self) -> u32 {
         let num_words = self.payload.len() as u32;
-        ((self.sender as u32) << 24)
-            | ((self.recipient as u32) << 16)
-            | ((self.command as u32) << 8)
-            | (num_words & 0xFF)
+        ((self.command as u32) << 24)      // Byte 3 = command
+            | ((self.recipient as u32) << 16) // Byte 2 = recipient
+            | ((self.sender as u32) << 8)     // Byte 1 = sender
+            | (num_words & 0xFF)              // Byte 0 = length
     }
 
     /// Computes the CRC over the frame and payload.
@@ -74,10 +76,10 @@ impl MaplePacket {
             return None;
         }
 
-        let sender = ((frame >> 24) & 0xFF) as u8;
-        let recipient = ((frame >> 16) & 0xFF) as u8;
-        let command = ((frame >> 8) & 0xFF) as u8;
-        let length = (frame & 0xFF) as usize;
+        let command = ((frame >> 24) & 0xFF) as u8;    // Byte 3
+        let recipient = ((frame >> 16) & 0xFF) as u8; // Byte 2
+        let sender = ((frame >> 8) & 0xFF) as u8;     // Byte 1
+        let length = (frame & 0xFF) as usize;         // Byte 0
 
         if words.len() < length + 2 {
             return None;

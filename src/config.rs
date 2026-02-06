@@ -1,17 +1,24 @@
 //! Configuration constants for the Dreamcast BLE Adapter.
+//! Target: nRF52840 (ARM Cortex-M4F, 64 MHz)
 
-/// Enable debug messages over UART0.
-/// Warning: enabling debug messages drastically degrades communication performance.
+/// Enable debug messages over RTT.
+/// Warning: enabling debug messages may affect timing-critical operations.
 pub const SHOW_DEBUG_MESSAGES: bool = false;
 
 /// Enable USB CDC (serial) interface to directly control the Maple bus.
-pub const USB_CDC_ENABLED: bool = true;
+pub const USB_CDC_ENABLED: bool = false; // Not yet implemented
 
 /// Enable USB MSC (mass storage) interface to read/write VMU files.
-pub const USB_MSC_ENABLED: bool = true;
+pub const USB_MSC_ENABLED: bool = false; // Not yet implemented
 
-/// CPU clock frequency in kHz (133000 kHz = 133 MHz is recommended).
-pub const CPU_FREQ_KHZ: u32 = 133_000;
+/// CPU clock frequency in kHz (64000 kHz = 64 MHz for nRF52840).
+pub const CPU_FREQ_KHZ: u32 = 64_000;
+
+/// CPU clock frequency in Hz.
+pub const CPU_FREQ_HZ: u32 = CPU_FREQ_KHZ * 1_000;
+
+/// Nanoseconds per CPU cycle (15.625 ns at 64 MHz).
+pub const NS_PER_CYCLE: u32 = 1_000_000 / CPU_FREQ_KHZ; // ~15ns
 
 /// Minimum time to check for an open line before taking control of it (microseconds).
 /// Set to 0 to disable this check.
@@ -37,13 +44,19 @@ pub const MAPLE_RESPONSE_NS_PER_BIT: u32 = 1750;
 /// 300 us accommodates for ~180 us gaps from some Dreamcast controllers.
 pub const MAPLE_INTER_WORD_READ_TIMEOUT_US: u32 = 300;
 
-/// IO direction pin for each player (-1 to disable).
-pub const P1_DIR_PIN: i8 = 6;
-pub const P2_DIR_PIN: i8 = 7;
-pub const P3_DIR_PIN: i8 = 26;
-pub const P4_DIR_PIN: i8 = 27;
+/// Maple Bus GPIO pin assignments for nRF52840-DK.
+/// Using P0 pins that are exposed on the DK board headers.
+/// SDCKA and SDCKB are the two bidirectional data/clock lines.
+pub const MAPLE_SDCKA_PIN: u8 = 5;  // P0.05
+pub const MAPLE_SDCKB_PIN: u8 = 6;  // P0.06
+
+/// Optional direction control pin for level shifter/buffer (-1 to disable).
+/// Set high for output, low for input (if DIR_OUT_HIGH is true).
+pub const MAPLE_DIR_PIN: i8 = -1;  // Disabled - direct 3.3V connection
 
 /// True if DIR pin is HIGH for output and LOW for input; false if opposite.
 pub const DIR_OUT_HIGH: bool = true;
 
-/// Start pin
+/// Maple Bus polling interval in microseconds.
+/// 16ms = 60Hz polling rate (matches typical game refresh).
+pub const MAPLE_POLL_INTERVAL_US: u32 = 16_000;

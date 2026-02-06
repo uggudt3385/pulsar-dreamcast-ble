@@ -1,5 +1,6 @@
 MEMORY
 {
-  FLASH : ORIGIN = 0x00000000 + 156K, LENGTH = 1024K - 156K
-  RAM   : ORIGIN = 0x20000000 + 5736, LENGTH = 256K - 5736
+  /* Standalone mode (no SoftDevice) for testing */
+  FLASH : ORIGIN = 0x00000000, LENGTH = 1024K
+  RAM   : ORIGIN = 0x20000000, LENGTH = 256K
 }
