@@ -1,10 +1,8 @@
 #![no_std]
 #![no_main]
 
-use cortex_m::asm::nop;
 use cortex_m_rt::entry;
 use nb::block;
-
 use panic_halt as _;
 
 use nrf52840_dk_bsp::hal::{
@@ -16,152 +14,210 @@ use nrf52840_dk_bsp::hal::{
 
 use rtt_target::{rprintln, rtt_init_print};
 
-// Maple Dependencies
 mod maple;
 
 use crate::maple::host::MapleResult;
-use crate::maple::{MapleBusGpio, MapleHost};
+use crate::maple::{ControllerState, MapleBusGpio, MapleHost};
 
 #[entry]
 fn main() -> ! {
     rtt_init_print!();
     rprintln!("Dreamcast Controller Adapter Starting...");
 
-    // Take peripherals
     let periph = pac::Peripherals::take().unwrap();
-
-    // Set up GPIO
     let p0 = P0Parts::new(periph.P0);
-
-    // Set up timer
     let mut timer = Timer::new(periph.TIMER0);
 
-    // Set up LEDs (accent active low on DK)
+    // LEDs (active low on DK)
     let mut led1 = p0.p0_13.into_push_pull_output(Level::High).degrade();
     let mut led2 = p0.p0_14.into_push_pull_output(Level::High).degrade();
     let mut led3 = p0.p0_15.into_push_pull_output(Level::High).degrade();
     let mut led4 = p0.p0_16.into_push_pull_output(Level::High).degrade();
 
-    // Blink LED1 to show we're starting
+    // Startup blink
     for _ in 0..3 {
-        let _ = led1.set_low(); // LED on
+        let _ = led1.set_low();
         delay(&mut timer, 100_000);
-        let _ = led1.set_high(); // LED off
+        let _ = led1.set_high();
         delay(&mut timer, 100_000);
     }
 
-    rprintln!("Setting up Maple Bus on P0.05 (SDCKA) and P0.06 (SDCKB)...");
-
-    // First, read the lines as inputs to see natural state from controller
+    // Check initial bus state
     let test_a = p0.p0_05.into_pullup_input();
     let test_b = p0.p0_06.into_pullup_input();
-    delay(&mut timer, 10_000); // Let pull-ups settle
+    delay(&mut timer, 10_000);
     let a = test_a.is_high().unwrap_or(false);
     let b = test_b.is_high().unwrap_or(false);
-    rprintln!("Initial bus state (as inputs): A={} B={}", a as u8, b as u8);
+    rprintln!("Bus state: A={} B={}", a as u8, b as u8);
 
-    // Set up Maple Bus GPIO pins as PUSH-PULL output
-    // SDCKA (Pin 1/Red) on P0.05 - idle HIGH
-    // SDCKB (Pin 5/White) on P0.06 - idle LOW
+    // Set up Maple Bus
     let sdcka = test_a.into_push_pull_output(Level::High).degrade();
     let sdckb = test_b.into_push_pull_output(Level::Low).degrade();
-
     let mut bus = MapleBusGpio::new(sdcka, sdckb);
     let host = MapleHost::new();
 
-    // Debug: Toggle pins to verify wiring
-    // If you have a multimeter/scope, check P0.05 and P0.06 are toggling
-    rprintln!("Debug: Toggling Maple Bus pins 5 times...");
-    for i in 0..5 {
-        bus.set_idle(); // SDCKA high, SDCKB low
-        delay(&mut timer, 500_000); // 500ms
+    // Detect controller
+    rprintln!("Detecting controller...");
+    let _ = led2.set_low();
 
-        // Swap state
-        bus.send_start_pattern(); // This will toggle the lines
-        delay(&mut timer, 500_000); // 500ms
-        rprintln!("  Toggle {}", i);
-    }
-    bus.set_idle();
+    let (new_bus, result) = host.request_device_info(bus);
+    bus = new_bus;
 
-    rprintln!("Maple Bus initialized. Attempting to detect controller...");
-    let _ = led2.set_low(); // LED2 on = trying to communicate
-
-    // Try to get device info
-    let (mut bus, result) = host.request_device_info(bus);
-
-    match &result {
+    let controller_detected = match &result {
         MapleResult::Ok(info) => {
-            rprintln!("Controller detected!");
-            rprintln!("  Functions: 0x{:08X}", info.functions);
-            let _ = led2.set_high(); // LED2 off
-            let _ = led3.set_low(); // LED3 on = success
-        }
-        MapleResult::Timeout => {
-            rprintln!("No response from controller (timeout)");
+            rprintln!("Controller found! Functions: 0x{:08X}", info.functions);
             let _ = led2.set_high();
-            let _ = led4.set_low(); // LED4 on = error
+            let _ = led3.set_low();
+            true
         }
-        MapleResult::CrcError => {
-            rprintln!("CRC error in response");
+        _ => {
+            rprintln!("No controller detected");
+            let _ = led2.set_high();
             let _ = led4.set_low();
+            false
         }
-        MapleResult::UnexpectedResponse(cmd) => {
-            rprintln!("Unexpected response: 0x{:02X}", cmd);
-            let _ = led4.set_low();
+    };
+
+    if !controller_detected {
+        rprintln!("Halting - no controller");
+        loop {
+            cortex_m::asm::wfi();
         }
     }
 
-    // Set up button for manual trigger
-    let button1 = p0.p0_11.into_pullup_input();
+    // Controller polling loop
+    rprintln!("");
+    rprintln!("=== Polling Controller Input ===");
+    rprintln!("Press buttons on the Dreamcast controller!");
+    rprintln!("");
 
-    rprintln!("Entering main loop...");
-    rprintln!("Press Button 1 on DK to send Device Info Request");
-
-    let mut poll_count = 0u32;
-    let mut last_button_state = false;
+    let mut last_state: Option<ControllerState> = None;
+    let mut poll_count: u32 = 0;
 
     loop {
-        // Check if button 1 is pressed (active low)
-        let button_pressed = button1.is_low().unwrap_or(false);
+        let (new_bus, result) = host.get_condition(bus);
+        bus = new_bus;
 
-        // Detect button press (falling edge)
-        if button_pressed && !last_button_state {
-            rprintln!("Button pressed - sending Device Info Request...");
-            let _ = led2.set_low(); // LED2 on
+        match result {
+            MapleResult::Ok(state) => {
+                // LED1 on when any button pressed
+                if state.buttons.any_pressed() {
+                    let _ = led1.set_low();
+                } else {
+                    let _ = led1.set_high();
+                }
 
-            let (new_bus, result) = host.request_device_info(bus);
-            bus = new_bus;
+                // Only print when state changes
+                let changed = match &last_state {
+                    None => true,
+                    Some(prev) => state_changed(prev, &state),
+                };
 
-            match &result {
-                MapleResult::Ok(info) => {
-                    rprintln!("SUCCESS! Controller detected!");
-                    rprintln!("  Functions: 0x{:08X}", info.functions);
-                    let _ = led2.set_high();
-                    let _ = led3.set_low(); // LED3 on = success
-                    let _ = led4.set_high();
-                }
-                MapleResult::Timeout => {
-                    rprintln!("TIMEOUT - no response");
-                    let _ = led2.set_high();
-                    let _ = led3.set_high();
-                    let _ = led4.set_low(); // LED4 on = error
-                }
-                MapleResult::UnexpectedResponse(cmd) => {
-                    rprintln!("Got response but unexpected command: 0x{:02X}", cmd);
-                    let _ = led2.set_high();
-                    let _ = led4.set_low();
-                }
-                MapleResult::CrcError => {
-                    rprintln!("CRC error in response");
-                    let _ = led4.set_low();
+                if changed {
+                    print_state(&state);
+                    last_state = Some(state);
                 }
             }
+            MapleResult::Timeout => {
+                if poll_count % 100 == 0 {
+                    rprintln!("Poll timeout");
+                }
+            }
+            MapleResult::CrcError => {
+                rprintln!("CRC error");
+            }
+            MapleResult::UnexpectedResponse(cmd) => {
+                rprintln!("Unexpected: 0x{:02X}", cmd);
+            }
         }
-        last_button_state = button_pressed;
 
         poll_count = poll_count.wrapping_add(1);
-        delay(&mut timer, 10_000); // 10ms debounce
-        nop();
+        delay(&mut timer, 16_000); // ~60Hz polling
+    }
+}
+
+fn state_changed(prev: &ControllerState, curr: &ControllerState) -> bool {
+    // Check buttons
+    if prev.buttons.a != curr.buttons.a
+        || prev.buttons.b != curr.buttons.b
+        || prev.buttons.x != curr.buttons.x
+        || prev.buttons.y != curr.buttons.y
+        || prev.buttons.start != curr.buttons.start
+        || prev.buttons.dpad_up != curr.buttons.dpad_up
+        || prev.buttons.dpad_down != curr.buttons.dpad_down
+        || prev.buttons.dpad_left != curr.buttons.dpad_left
+        || prev.buttons.dpad_right != curr.buttons.dpad_right
+    {
+        return true;
+    }
+
+    // Check triggers (with deadzone)
+    if (prev.trigger_l as i16 - curr.trigger_l as i16).abs() > 10
+        || (prev.trigger_r as i16 - curr.trigger_r as i16).abs() > 10
+    {
+        return true;
+    }
+
+    // Check stick (with deadzone)
+    if (prev.stick_x as i16 - curr.stick_x as i16).abs() > 15
+        || (prev.stick_y as i16 - curr.stick_y as i16).abs() > 15
+    {
+        return true;
+    }
+
+    false
+}
+
+fn print_state(state: &ControllerState) {
+    let b = &state.buttons;
+
+    // Build button string
+    let mut btns: heapless::String<32> = heapless::String::new();
+    if b.a {
+        let _ = btns.push_str("A ");
+    }
+    if b.b {
+        let _ = btns.push_str("B ");
+    }
+    if b.x {
+        let _ = btns.push_str("X ");
+    }
+    if b.y {
+        let _ = btns.push_str("Y ");
+    }
+    if b.start {
+        let _ = btns.push_str("ST ");
+    }
+    if b.dpad_up {
+        let _ = btns.push_str("U ");
+    }
+    if b.dpad_down {
+        let _ = btns.push_str("D ");
+    }
+    if b.dpad_left {
+        let _ = btns.push_str("L ");
+    }
+    if b.dpad_right {
+        let _ = btns.push_str("R ");
+    }
+
+    if btns.is_empty() {
+        rprintln!(
+            "Stick({},{}) Trig({},{})",
+            state.stick_x,
+            state.stick_y,
+            state.trigger_l,
+            state.trigger_r
+        );
+    } else {
+        rprintln!(
+            "[{}] Stick({},{}) Trig({},{})",
+            btns.trim_end(),
+            state.stick_x,
+            state.stick_y,
+            state.trigger_l,
+            state.trigger_r
+        );
     }
 }
 

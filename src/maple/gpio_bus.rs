@@ -548,12 +548,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let sender = ((frame >> 8) & 0xFF) as u8;
         let length = (frame & 0xFF) as usize;
 
-        rprintln!(
-            "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
-            frame,
-            command,
-            length
-        );
+        // rprintln!(
+        //     "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
+        //     frame,
+        //     command,
+        //     length
+        // );
 
         if length > 255 {
             return None;
@@ -580,7 +580,7 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
             return None;
         }
 
-        rprintln!("RX: OK!");
+        // rprintln!("RX: OK!");
         Some(MaplePacket {
             sender,
             recipient,
@@ -820,6 +820,8 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let (bits, _a_falls, _b_falls, _gaps) =
             self.decode_bulk_samples(samples, count, skip_samples);
 
+        // rprintln!("RX: bits={} a={} b={} gaps={}", bits.len(), _a_falls, _b_falls, _gaps);
+
         if bits.len() < 32 {
             rprintln!("RX: Not enough bits ({})", bits.len());
             return None;
@@ -841,6 +843,29 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
             return None;
         }
 
+        // Debug: print first 17 bytes only when they change
+        // static mut LAST_BYTES: [u8; 17] = [0; 17];
+        // if byte_count >= 17 {
+        //     let changed = unsafe {
+        //         (0..17).any(|i| bytes[i] != LAST_BYTES[i])
+        //     };
+        //     if changed {
+        //         rprintln!(
+        //             "{:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} | {:02X} {:02X} {:02X} {:02X} | {:02X}",
+        //             bytes[0], bytes[1], bytes[2], bytes[3],
+        //             bytes[4], bytes[5], bytes[6], bytes[7],
+        //             bytes[8], bytes[9], bytes[10], bytes[11],
+        //             bytes[12], bytes[13], bytes[14], bytes[15],
+        //             bytes[16]
+        //         );
+        //         unsafe {
+        //             for i in 0..17 {
+        //                 LAST_BYTES[i] = bytes[i];
+        //             }
+        //         }
+        //     }
+        // }
+
         // Parse frame word (LSB byte first)
         let frame = (bytes[0] as u32)
             | ((bytes[1] as u32) << 8)
@@ -852,12 +877,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let sender = ((frame >> 8) & 0xFF) as u8;
         let length = (frame & 0xFF) as usize;
 
-        rprintln!(
-            "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
-            frame,
-            command,
-            length
-        );
+        // rprintln!(
+        //     "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
+        //     frame,
+        //     command,
+        //     length
+        // );
 
         // Calculate CRC over frame
         let mut crc: u8 = bytes[0] ^ bytes[1] ^ bytes[2] ^ bytes[3];
@@ -896,7 +921,7 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
             return None;
         }
 
-        rprintln!("RX: OK!");
+        // rprintln!("RX: OK!");
         Some(MaplePacket {
             sender,
             recipient,

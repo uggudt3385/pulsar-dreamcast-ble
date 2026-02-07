@@ -184,7 +184,7 @@ impl MapleHost {
             payload,
         };
 
-        rprintln!("TX: GetCondition");
+        // rprintln!("TX: GetCondition");
         bus.write_packet(&packet);
 
         // Switch to input mode and read response using bulk sampling
@@ -201,6 +201,14 @@ impl MapleHost {
                 if pkt.command != commands::CONDITION_RESPONSE {
                     MapleResult::UnexpectedResponse(pkt.command)
                 } else {
+                    // Debug: print raw payload words
+                    // if pkt.payload.len() >= 3 {
+                    //     rprintln!(
+                    //         "w1={:08X} w2={:08X}",
+                    //         pkt.payload[1],
+                    //         pkt.payload[2]
+                    //     );
+                    // }
                     match ControllerState::from_payload(&pkt.payload) {
                         Some(state) => MapleResult::Ok(state),
                         None => MapleResult::UnexpectedResponse(pkt.command),

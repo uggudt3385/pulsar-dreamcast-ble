@@ -101,17 +101,26 @@ impl ControllerState {
             return None; // Not a standard controller
         }
 
-        // Word 1: Buttons in upper 16 bits
-        let buttons_raw = ((payload[1] >> 16) & 0xFFFF) as u16;
+        // Word 1 format (bytes on wire): [trig_L, trig_R, btn_low, btn_high]
+        // Assembled: trig_L | (trig_R << 8) | (btn_low << 16) | (btn_high << 24)
+        // Triggers are inverted: 0xFF = released, 0x00 = fully pressed
+        let word1 = payload[1];
+        let trigger_l_raw = (word1 & 0xFF) as u8;
+        let trigger_r_raw = ((word1 >> 8) & 0xFF) as u8;
+        // Invert triggers: 0xFF->0, 0x00->255
+        let trigger_l = 255 - trigger_l_raw;
+        let trigger_r = 255 - trigger_r_raw;
+
+        // Buttons in upper 16 bits, bytes swapped
+        let buttons_word = ((word1 >> 16) & 0xFFFF) as u16;
+        let buttons_raw = buttons_word.swap_bytes();
         let buttons = ButtonState::from_raw(buttons_raw);
 
-        // Word 2: Analog values
-        // Byte layout: [R trigger] [L trigger] [Stick X] [Stick Y]
+        // Word 2: Analog sticks
+        // Wire sends: [stick_x, stick_y, stick2_x, stick2_y]
         let analog_word = payload[2];
-        let trigger_r = ((analog_word >> 24) & 0xFF) as u8;
-        let trigger_l = ((analog_word >> 16) & 0xFF) as u8;
-        let stick_x = ((analog_word >> 8) & 0xFF) as u8;
-        let stick_y = (analog_word & 0xFF) as u8;
+        let stick_x = (analog_word & 0xFF) as u8;
+        let stick_y = ((analog_word >> 8) & 0xFF) as u8;
 
         Some(Self {
             buttons,
@@ -152,17 +161,27 @@ mod tests {
 
     #[test]
     fn test_controller_state_parse() {
+        // Word 1: [trig_L_raw, trig_R_raw, btn_low, btn_high]
+        // Triggers inverted: 0xFF = released (becomes 0), 0x00 = pressed (becomes 255)
+        // For trigger_l = 200 (after invert): raw = 255 - 200 = 55 = 0x37
+        // For trigger_r = 100 (after invert): raw = 255 - 100 = 155 = 0x9B
+        // Buttons: A pressed = bit 2 low. After swap_bytes on upper 16: need 0xFFFB
+        // Upper 16 bits = btn_low | (btn_high << 8), so bytes [0xFB, 0xFF]
+        // Word 1 = 0x37 | (0x9B << 8) | (0xFB << 16) | (0xFF << 24) = 0xFFFB9B37
+        //
+        // Word 2: [stick_x, stick_y, ...]
+        // For stick_x = 64, stick_y = 200: Word 2 = 64 | (200 << 8) | ... = 0x????C840
         let payload = [
-            0x00000001, // Function type: controller
-            0xFFFB0000, // A button pressed (bit 2 = 0), lower 16 unused
-            0x80804080, // R=128, L=64, X=64, Y=128
+            0x00000001,  // Function type: controller
+            0xFFFB9B37,  // trig_L_raw=0x37, trig_R_raw=0x9B, buttons=A pressed
+            0x8080C840,  // stick_x=64, stick_y=200, unused
         ];
 
         let state = ControllerState::from_payload(&payload).unwrap();
         assert!(state.buttons.a);
-        assert_eq!(state.trigger_r, 128);
-        assert_eq!(state.trigger_l, 64);
+        assert_eq!(state.trigger_l, 200);
+        assert_eq!(state.trigger_r, 100);
         assert_eq!(state.stick_x, 64);
-        assert_eq!(state.stick_y, 128);
+        assert_eq!(state.stick_y, 200);
     }
 }
