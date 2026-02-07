@@ -9,19 +9,19 @@
 //! - 500ns per phase = 2Mbps
 //! - Idle state: SDCKA HIGH, SDCKB LOW
 
-use core::sync::atomic::{compiler_fence, Ordering};
-use nrf52840_dk_bsp::hal::gpio::{Output, Input, Pin, PushPull, PullUp, Level};
-use nrf52840_dk_bsp::hal::prelude::*;
-use nrf52840_dk_bsp::hal::pac::P0;
 use crate::maple::MaplePacket;
+use core::sync::atomic::{Ordering, compiler_fence};
 use heapless::Vec;
+use nrf52840_dk_bsp::hal::gpio::{Input, Level, Output, Pin, PullUp, PushPull};
+use nrf52840_dk_bsp::hal::pac::P0;
+use nrf52840_dk_bsp::hal::prelude::*;
 use rtt_target::rprintln;
 
 /// Static buffer for bulk sampling (96KB). Pre-allocated to avoid runtime delay.
 static mut SAMPLE_BUFFER: [u32; 24576] = [0; 24576];
 
-const PIN_A_MASK: u32 = 1 << 5;  // SDCKA on P0.05
-const PIN_B_MASK: u32 = 1 << 6;  // SDCKB on P0.06
+const PIN_A_MASK: u32 = 1 << 5; // SDCKA on P0.05
+const PIN_B_MASK: u32 = 1 << 6; // SDCKB on P0.06
 
 #[inline(always)]
 fn read_pins_fast() -> (bool, bool) {
@@ -33,14 +33,18 @@ fn read_pins_fast() -> (bool, bool) {
 /// ~500ns delay at 64MHz
 #[inline(always)]
 fn delay_half_bit() {
-    for _ in 0..32 { cortex_m::asm::nop(); }
+    for _ in 0..32 {
+        cortex_m::asm::nop();
+    }
     compiler_fence(Ordering::SeqCst);
 }
 
 /// ~1µs delay at 64MHz
 #[inline(always)]
 fn delay_full_bit() {
-    for _ in 0..64 { cortex_m::asm::nop(); }
+    for _ in 0..64 {
+        cortex_m::asm::nop();
+    }
     compiler_fence(Ordering::SeqCst);
 }
 
@@ -198,10 +202,10 @@ impl MapleBusGpioOut {
     /// Write a 32-bit word in Maple Bus byte order.
     /// "The last byte sends first" - LSB first.
     pub fn write_word(&mut self, word: u32, phase: &mut bool) {
-        self.write_byte(word as u8, phase);          // Byte 0 (LSB) - first
-        self.write_byte((word >> 8) as u8, phase);   // Byte 1
-        self.write_byte((word >> 16) as u8, phase);  // Byte 2
-        self.write_byte((word >> 24) as u8, phase);  // Byte 3 (MSB) - last
+        self.write_byte(word as u8, phase); // Byte 0 (LSB) - first
+        self.write_byte((word >> 8) as u8, phase); // Byte 1
+        self.write_byte((word >> 16) as u8, phase); // Byte 2
+        self.write_byte((word >> 24) as u8, phase); // Byte 3 (MSB) - last
     }
 
     /// Write a complete packet (frame word + payload + CRC).
@@ -293,7 +297,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
     /// Returns None on timeout.
     /// If debug_raw is provided, stores the raw register value when bit was sampled.
     #[inline(always)]
-    pub fn read_bit_timeout_raw(&mut self, phase: &mut bool, timeout: &mut u32, debug_raw: Option<&mut u32>) -> Option<bool> {
+    pub fn read_bit_timeout_raw(
+        &mut self,
+        phase: &mut bool,
+        timeout: &mut u32,
+        debug_raw: Option<&mut u32>,
+    ) -> Option<bool> {
         // Get register address once - P0 IN register is at base + 0x510
         // PAC uses VolatileCell internally, so reads are volatile
         let p0_in = unsafe { &(*P0::ptr()).in_ };
@@ -369,7 +378,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
 
     /// Read a byte, MSB first. Returns None on timeout.
     /// If debug_bits is provided, stores the individual bits read.
-    pub fn read_byte_timeout_debug(&mut self, phase: &mut bool, timeout: &mut u32, mut debug_bits: Option<&mut [u8; 8]>) -> Option<u8> {
+    pub fn read_byte_timeout_debug(
+        &mut self,
+        phase: &mut bool,
+        timeout: &mut u32,
+        mut debug_bits: Option<&mut [u8; 8]>,
+    ) -> Option<u8> {
         let mut byte: u8 = 0;
         for i in 0..8 {
             let bit = self.read_bit_timeout(phase, timeout)?;
@@ -509,9 +523,13 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         // Wait for SDCKA to go LOW (controller starts response)
         let mut count = 0u32;
         loop {
-            if (p0_in.read().bits() & PIN_A_MASK) == 0 { break; }
+            if (p0_in.read().bits() & PIN_A_MASK) == 0 {
+                break;
+            }
             count += 1;
-            if count > timeout_cycles { return false; }
+            if count > timeout_cycles {
+                return false;
+            }
         }
 
         // Wait for A to go HIGH (start pattern complete)
@@ -524,7 +542,9 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
                 return true;
             }
             count += 1;
-            if count > 10000 { return false; }
+            if count > 10000 {
+                return false;
+            }
         }
     }
 
@@ -553,9 +573,16 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let sender = ((frame >> 8) & 0xFF) as u8;
         let length = (frame & 0xFF) as usize;
 
-        rprintln!("RX: Frame=0x{:08X} cmd=0x{:02X} len={}", frame, command, length);
+        rprintln!(
+            "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
+            frame,
+            command,
+            length
+        );
 
-        if length > 255 { return None; }
+        if length > 255 {
+            return None;
+        }
 
         // Update CRC with frame
         crc ^= b0 ^ b1 ^ b2 ^ b3;
@@ -579,23 +606,41 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         }
 
         rprintln!("RX: OK!");
-        Some(MaplePacket { sender, recipient, command, payload })
+        Some(MaplePacket {
+            sender,
+            recipient,
+            command,
+            payload,
+        })
     }
 
     /// Wait for start pattern and immediately bulk sample.
     /// Combining these avoids the function-call delay that caused missed edges.
-    pub fn wait_and_sample(&mut self, timeout_cycles: u32) -> (bool, u32, u32, usize, &'static [u32; 24576]) {
+    pub fn wait_and_sample(
+        &mut self,
+        timeout_cycles: u32,
+    ) -> (bool, u32, u32, usize, &'static [u32; 24576]) {
         let p0_in = unsafe { &(*P0::ptr()).in_ };
-        let samples = unsafe { core::ptr::addr_of_mut!(SAMPLE_BUFFER).as_mut().unwrap_unchecked() };
+        let samples = unsafe {
+            core::ptr::addr_of_mut!(SAMPLE_BUFFER)
+                .as_mut()
+                .unwrap_unchecked()
+        };
 
         // Wait for idle (both HIGH)
         let mut count = 0u32;
         loop {
             let val = p0_in.read().bits();
-            if (val & PIN_A_MASK) != 0 && (val & PIN_B_MASK) != 0 { break; }
+            if (val & PIN_A_MASK) != 0 && (val & PIN_B_MASK) != 0 {
+                break;
+            }
             count += 1;
             if count > timeout_cycles / 2 {
-                return (false, count, 0, 0, unsafe { core::ptr::addr_of!(SAMPLE_BUFFER).as_ref().unwrap_unchecked() });
+                return (false, count, 0, 0, unsafe {
+                    core::ptr::addr_of!(SAMPLE_BUFFER)
+                        .as_ref()
+                        .unwrap_unchecked()
+                });
             }
         }
         let idle_cycles = count;
@@ -604,10 +649,16 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         count = 0;
         loop {
             let val = p0_in.read().bits();
-            if (val & PIN_A_MASK) == 0 { break; }
+            if (val & PIN_A_MASK) == 0 {
+                break;
+            }
             count += 1;
             if count > timeout_cycles {
-                return (false, idle_cycles + count, 0, 0, unsafe { core::ptr::addr_of!(SAMPLE_BUFFER).as_ref().unwrap_unchecked() });
+                return (false, idle_cycles + count, 0, 0, unsafe {
+                    core::ptr::addr_of!(SAMPLE_BUFFER)
+                        .as_ref()
+                        .unwrap_unchecked()
+                });
             }
         }
         let wait_cycles = idle_cycles + count;
@@ -622,21 +673,32 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
             let a = (val & PIN_A_MASK) != 0;
             let b = (val & PIN_B_MASK) != 0;
 
-            if b != last_b { b_transitions += 1; last_b = b; }
+            if b != last_b {
+                b_transitions += 1;
+                last_b = b;
+            }
 
             if a && b_transitions >= 3 {
                 // Valid start pattern - sample IMMEDIATELY (no return delay!)
                 compiler_fence(Ordering::SeqCst);
-                for i in 0..24576 { samples[i] = p0_in.read().bits(); }
+                for i in 0..24576 {
+                    samples[i] = p0_in.read().bits();
+                }
                 compiler_fence(Ordering::SeqCst);
-                return (true, wait_cycles, b_transitions, 24576,
-                    unsafe { core::ptr::addr_of!(SAMPLE_BUFFER).as_ref().unwrap_unchecked() });
+                return (true, wait_cycles, b_transitions, 24576, unsafe {
+                    core::ptr::addr_of!(SAMPLE_BUFFER)
+                        .as_ref()
+                        .unwrap_unchecked()
+                });
             }
 
             count += 1;
             if count > 10000 {
-                return (false, wait_cycles, b_transitions, 0,
-                    unsafe { core::ptr::addr_of!(SAMPLE_BUFFER).as_ref().unwrap_unchecked() });
+                return (false, wait_cycles, b_transitions, 0, unsafe {
+                    core::ptr::addr_of!(SAMPLE_BUFFER)
+                        .as_ref()
+                        .unwrap_unchecked()
+                });
             }
         }
     }
@@ -644,19 +706,34 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
     /// Bulk sample GPIO register. Prefer wait_and_sample() for RX.
     pub fn bulk_sample(&mut self) -> (usize, &'static [u32; 24576]) {
         let p0_in = unsafe { &(*P0::ptr()).in_ };
-        let samples = unsafe { core::ptr::addr_of_mut!(SAMPLE_BUFFER).as_mut().unwrap_unchecked() };
+        let samples = unsafe {
+            core::ptr::addr_of_mut!(SAMPLE_BUFFER)
+                .as_mut()
+                .unwrap_unchecked()
+        };
 
         compiler_fence(Ordering::SeqCst);
-        for i in 0..24576 { samples[i] = p0_in.read().bits(); }
+        for i in 0..24576 {
+            samples[i] = p0_in.read().bits();
+        }
         compiler_fence(Ordering::SeqCst);
 
-        (24576, unsafe { core::ptr::addr_of!(SAMPLE_BUFFER).as_ref().unwrap_unchecked() })
+        (24576, unsafe {
+            core::ptr::addr_of!(SAMPLE_BUFFER)
+                .as_ref()
+                .unwrap_unchecked()
+        })
     }
 
     /// Decode bits from bulk samples. Detects falling edges and extracts data.
     /// Enforces phase alignment: skips B edges until first A fall.
     /// Detects inter-chunk gaps and resets phase after each.
-    pub fn decode_bulk_samples(&self, samples: &[u32], count: usize, start_sample: usize) -> (Vec<u8, 1024>, u32, u32, u32) {
+    pub fn decode_bulk_samples(
+        &self,
+        samples: &[u32],
+        count: usize,
+        start_sample: usize,
+    ) -> (Vec<u8, 1024>, u32, u32, u32) {
         const GAP_THRESHOLD: usize = 50;
 
         let mut bits: Vec<u8, 1024> = Vec::new();
@@ -664,7 +741,11 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let mut b_falls: u32 = 0;
         let mut gaps_detected: u32 = 0;
 
-        let start_idx = if start_sample > 0 && start_sample < count { start_sample } else { 1 };
+        let start_idx = if start_sample > 0 && start_sample < count {
+            start_sample
+        } else {
+            1
+        };
         let init_idx = if start_idx > 0 { start_idx - 1 } else { 0 };
         let mut last_a = (samples[init_idx] & PIN_A_MASK) != 0;
         let mut last_b = (samples[init_idx] & PIN_B_MASK) != 0;
@@ -681,7 +762,7 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
             } else {
                 if idle_count > GAP_THRESHOLD {
                     gaps_detected += 1;
-                    seen_first_a_fall = false;  // Reset phase after gap
+                    seen_first_a_fall = false; // Reset phase after gap
                 }
                 idle_count = 0;
             }
@@ -708,7 +789,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
     }
 
     /// Debug: Find first N edges and their sample indices
-    pub fn find_first_edges(&self, samples: &[u32], count: usize, max_edges: usize) -> Vec<(usize, char, bool), 64> {
+    pub fn find_first_edges(
+        &self,
+        samples: &[u32],
+        count: usize,
+        max_edges: usize,
+    ) -> Vec<(usize, char, bool), 64> {
         let mut edges: Vec<(usize, char, bool), 64> = Vec::new();
         let mut last_a = (samples[0] & PIN_A_MASK) != 0;
         let mut last_b = (samples[0] & PIN_B_MASK) != 0;
@@ -747,12 +833,17 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         }
 
         // Check first edge to detect late start (false start pattern)
-        let edges = self.find_first_edges(samples, count, 10);
+        let edges = self.find_first_edges(samples, count, 40);
         let first_edge_idx = edges.first().map(|(idx, _, _)| *idx).unwrap_or(0);
-        let skip_samples = if first_edge_idx > 100 { first_edge_idx.saturating_sub(10) } else { 0 };
+        let skip_samples = if first_edge_idx > 100 {
+            first_edge_idx.saturating_sub(10)
+        } else {
+            0
+        };
 
         // Decode bits from samples
-        let (bits, _a_falls, _b_falls, _gaps) = self.decode_bulk_samples(samples, count, skip_samples);
+        let (bits, _a_falls, _b_falls, _gaps) =
+            self.decode_bulk_samples(samples, count, skip_samples);
 
         if bits.len() < 32 {
             rprintln!("RX: Not enough bits ({})", bits.len());
@@ -786,7 +877,12 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         let sender = ((frame >> 8) & 0xFF) as u8;
         let length = (frame & 0xFF) as usize;
 
-        rprintln!("RX: Frame=0x{:08X} cmd=0x{:02X} len={}", frame, command, length);
+        rprintln!(
+            "RX: Frame=0x{:08X} cmd=0x{:02X} len={}",
+            frame,
+            command,
+            length
+        );
 
         // Calculate CRC over frame
         let mut crc: u8 = bytes[0] ^ bytes[1] ^ bytes[2] ^ bytes[3];
@@ -794,7 +890,11 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         // Verify we have enough data
         let expected_bytes = 4 + (length * 4) + 1;
         if byte_count < expected_bytes {
-            rprintln!("RX: Incomplete (need {} bytes, got {})", expected_bytes, byte_count);
+            rprintln!(
+                "RX: Incomplete (need {} bytes, got {})",
+                expected_bytes,
+                byte_count
+            );
             return None;
         }
 
@@ -813,12 +913,21 @@ impl MapleBusGpio<Pin<Input<PullUp>>, Pin<Input<PullUp>>> {
         // Verify CRC
         let received_crc = bytes[4 + (length * 4)];
         if crc != received_crc {
-            rprintln!("RX: CRC error (calc=0x{:02X} recv=0x{:02X})", crc, received_crc);
+            rprintln!(
+                "RX: CRC error (calc=0x{:02X} recv=0x{:02X})",
+                crc,
+                received_crc
+            );
             return None;
         }
 
         rprintln!("RX: OK!");
-        Some(MaplePacket { sender, recipient, command, payload })
+        Some(MaplePacket {
+            sender,
+            recipient,
+            command,
+            payload,
+        })
     }
 
     /// Convert back to output mode (push-pull).
