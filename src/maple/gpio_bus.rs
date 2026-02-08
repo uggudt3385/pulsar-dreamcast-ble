@@ -15,7 +15,6 @@ use crate::maple::MaplePacket;
 use core::sync::atomic::{compiler_fence, Ordering};
 use embassy_nrf::gpio::{Flex, Pull};
 use heapless::Vec;
-use rtt_target::rprintln;
 
 /// Static buffer for bulk sampling (96KB). Pre-allocated to avoid runtime delay.
 static mut SAMPLE_BUFFER: [u32; 24576] = [0; 24576];
@@ -389,7 +388,7 @@ impl MapleBus {
         let (success, _wait_cycles, b_trans, count) = self.wait_and_sample(timeout_cycles);
 
         if !success {
-            rprintln!("RX: No start pattern (b_trans={})", b_trans);
+            // No start pattern detected
             return None;
         }
 
@@ -411,7 +410,7 @@ impl MapleBus {
             self.decode_bulk_samples(samples, count, skip_samples);
 
         if bits.len() < 32 {
-            rprintln!("RX: Not enough bits ({})", bits.len());
+            // Not enough bits
             return None;
         }
 
@@ -427,7 +426,7 @@ impl MapleBus {
         }
 
         if byte_count < 4 {
-            rprintln!("RX: Not enough bytes for frame");
+            // Not enough bytes for frame
             return None;
         }
 
@@ -446,11 +445,7 @@ impl MapleBus {
 
         let expected_bytes = 4 + (length * 4) + 1;
         if byte_count < expected_bytes {
-            rprintln!(
-                "RX: Incomplete (need {} bytes, got {})",
-                expected_bytes,
-                byte_count
-            );
+            // Incomplete packet
             return None;
         }
 
@@ -467,11 +462,7 @@ impl MapleBus {
 
         let received_crc = bytes[4 + (length * 4)];
         if crc != received_crc {
-            rprintln!(
-                "RX: CRC error (calc=0x{:02X} recv=0x{:02X})",
-                crc,
-                received_crc
-            );
+            // CRC error
             return None;
         }
 

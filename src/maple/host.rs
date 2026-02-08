@@ -149,34 +149,44 @@ impl MapleHost {
     }
 
     /// Send a Get Condition request to read controller state.
+    /// Retries up to 3 times on failure for resilience against BLE interference.
     pub fn get_condition(&self, bus: &mut MapleBus) -> MapleResult<ControllerState> {
-        let mut payload: Vec<u32, 255> = Vec::new();
-        payload.push(functions::CONTROLLER).ok();
+        const MAX_RETRIES: u8 = 3;
 
-        let packet = MaplePacket {
-            sender: addressing::HOST,
-            recipient: addressing::PORT_A_MAIN,
-            command: commands::GET_CONDITION,
-            payload,
-        };
+        for _attempt in 0..MAX_RETRIES {
+            let mut payload: Vec<u32, 255> = Vec::new();
+            payload.push(functions::CONTROLLER).ok();
 
-        bus.write_packet(&packet);
+            let packet = MaplePacket {
+                sender: addressing::HOST,
+                recipient: addressing::PORT_A_MAIN,
+                command: commands::GET_CONDITION,
+                payload,
+            };
 
-        let response = bus.read_packet_bulk(self.timeout_cycles);
+            bus.write_packet(&packet);
 
-        match response {
-            None => MapleResult::Timeout,
-            Some(pkt) => {
-                if pkt.command != commands::CONDITION_RESPONSE {
-                    MapleResult::UnexpectedResponse(pkt.command)
-                } else {
-                    match ControllerState::from_payload(&pkt.payload) {
-                        Some(state) => MapleResult::Ok(state),
-                        None => MapleResult::UnexpectedResponse(pkt.command),
+            let response = bus.read_packet_bulk(self.timeout_cycles);
+
+            match response {
+                None => {
+                    // Retry on timeout/error
+                    continue;
+                }
+                Some(pkt) => {
+                    if pkt.command != commands::CONDITION_RESPONSE {
+                        return MapleResult::UnexpectedResponse(pkt.command);
+                    } else {
+                        match ControllerState::from_payload(&pkt.payload) {
+                            Some(state) => return MapleResult::Ok(state),
+                            None => return MapleResult::UnexpectedResponse(pkt.command),
+                        }
                     }
                 }
             }
         }
+
+        MapleResult::Timeout
     }
 }
 
