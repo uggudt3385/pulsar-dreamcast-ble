@@ -119,7 +119,16 @@ async fn main(spawner: Spawner) {
     };
 
     if !controller_detected {
+        // Button 1 (P0.11) to retry - triggers system reset
+        let reset_button = Input::new(p.P0_11, Pull::Up);
         loop {
+            if reset_button.is_low() {
+                // Debounce
+                cortex_m::asm::delay(1_000_000);
+                if reset_button.is_low() {
+                    cortex_m::peripheral::SCB::sys_reset();
+                }
+            }
             cortex_m::asm::wfi();
         }
     }

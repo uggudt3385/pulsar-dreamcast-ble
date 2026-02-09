@@ -169,8 +169,22 @@ impl ControllerState {
             btns |= buttons::START;
         }
 
-        // Convert D-pad to hat switch
-        // Hat: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW, 8=neutral
+        // D-pad as buttons (bits 12-15) - commented out for testing hat switch only
+        // if self.buttons.dpad_up {
+        //     btns |= buttons::DPAD_UP;
+        // }
+        // if self.buttons.dpad_down {
+        //     btns |= buttons::DPAD_DOWN;
+        // }
+        // if self.buttons.dpad_left {
+        //     btns |= buttons::DPAD_LEFT;
+        // }
+        // if self.buttons.dpad_right {
+        //     btns |= buttons::DPAD_RIGHT;
+        // }
+
+        // D-pad as hat switch (required by BlueRetro and similar receivers)
+        // Hat: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW, 15=neutral
         let hat_value = match (
             self.buttons.dpad_up,
             self.buttons.dpad_down,
@@ -191,9 +205,10 @@ impl ControllerState {
         // Convert unsigned 0-255 (center=128) to signed 16-bit (center=0)
         // Scale from 8-bit range to 16-bit range: multiply by 256
         // Apply deadzone to prevent drift from imprecise center position
+        // Note: Dreamcast X/Y are swapped relative to HID standard
         const DEADZONE: i16 = 10;
-        let raw_x = self.stick_x as i16 - 128;
-        let raw_y = self.stick_y as i16 - 128;
+        let raw_x = self.stick_y as i16 - 128;  // Dreamcast Y → HID X
+        let raw_y = self.stick_x as i16 - 128;  // Dreamcast X → HID Y
         let left_x: i16 = if raw_x.abs() < DEADZONE {
             0
         } else {
@@ -216,8 +231,6 @@ impl ControllerState {
             hat: hat_value,
             left_x,
             left_y,
-            right_x: 0,  // Centered - Dreamcast has no right stick
-            right_y: 0,
             left_trigger,
             right_trigger,
         }

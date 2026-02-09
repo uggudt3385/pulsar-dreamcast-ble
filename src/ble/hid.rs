@@ -24,25 +24,22 @@ pub const HID_REPORT_DESCRIPTOR: &[u8] = &[
     // Report ID 1
     0x85, 0x01,        //   Report ID (1)
 
-    // 12 Buttons + 4 padding bits (2 bytes)
+    // 16 Buttons (2 bytes) - includes D-pad as buttons 13-16
     0x05, 0x09,        //   Usage Page (Button)
     0x19, 0x01,        //   Usage Minimum (Button 1)
-    0x29, 0x0C,        //   Usage Maximum (Button 12)
+    0x29, 0x10,        //   Usage Maximum (Button 16)
     0x15, 0x00,        //   Logical Minimum (0)
     0x25, 0x01,        //   Logical Maximum (1)
     0x75, 0x01,        //   Report Size (1)
-    0x95, 0x0C,        //   Report Count (12)
+    0x95, 0x10,        //   Report Count (16)
     0x81, 0x02,        //   Input (Data, Variable, Absolute)
-    // 4 bits padding to complete the 2 bytes
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x04,        //   Report Count (4)
-    0x81, 0x03,        //   Input (Constant) - padding
 
     // Hat Switch / D-pad (4 bits + 4 bits padding = 1 byte)
+    // Xbox One convention: 1-8 for directions, 0 for neutral
     0x05, 0x01,        //   Usage Page (Generic Desktop)
     0x09, 0x39,        //   Usage (Hat Switch)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x07,        //   Logical Maximum (7)
+    0x15, 0x01,        //   Logical Minimum (1)
+    0x25, 0x08,        //   Logical Maximum (8)
     0x35, 0x00,        //   Physical Minimum (0)
     0x46, 0x3B, 0x01,  //   Physical Maximum (315 degrees)
     0x65, 0x14,        //   Unit (Eng Rot: Degree)
@@ -115,27 +112,24 @@ pub struct GamepadReport {
     pub left_x: i16,
     /// Left stick Y (-32768=up, 0=center, 32767=down)
     pub left_y: i16,
-    /// Right stick X (-32768=left, 0=center, 32767=right)
-    pub right_x: i16,
-    /// Right stick Y (-32768=up, 0=center, 32767=down)
-    pub right_y: i16,
+    // Right stick: always zero in to_bytes() - Dreamcast has no right stick
     /// Left trigger (0=released, 1023=fully pressed)
     pub left_trigger: u16,
     /// Right trigger (0=released, 1023=fully pressed)
     pub right_trigger: u16,
 }
 
-/// Hat switch values for D-pad directions.
+/// Hat switch values for D-pad directions (Xbox One convention: 1-8, 0=neutral).
 pub mod hat {
-    pub const NORTH: u8 = 0;
-    pub const NORTH_EAST: u8 = 1;
-    pub const EAST: u8 = 2;
-    pub const SOUTH_EAST: u8 = 3;
-    pub const SOUTH: u8 = 4;
-    pub const SOUTH_WEST: u8 = 5;
-    pub const WEST: u8 = 6;
-    pub const NORTH_WEST: u8 = 7;
-    pub const NEUTRAL: u8 = 8;  // Or 0x0F - no direction pressed
+    pub const NEUTRAL: u8 = 0;     // No direction pressed
+    pub const NORTH: u8 = 1;       // Up
+    pub const NORTH_EAST: u8 = 2;  // Up + Right
+    pub const EAST: u8 = 3;        // Right
+    pub const SOUTH_EAST: u8 = 4;  // Down + Right
+    pub const SOUTH: u8 = 5;       // Down
+    pub const SOUTH_WEST: u8 = 6;  // Down + Left
+    pub const WEST: u8 = 7;        // Left
+    pub const NORTH_WEST: u8 = 8;  // Up + Left
 }
 
 impl GamepadReport {
@@ -146,8 +140,6 @@ impl GamepadReport {
             hat: hat::NEUTRAL,
             left_x: 0,           // Center
             left_y: 0,           // Center
-            right_x: 0,          // Center
-            right_y: 0,          // Center
             left_trigger: 0,     // Released
             right_trigger: 0,    // Released
         }
@@ -159,9 +151,9 @@ impl GamepadReport {
     /// NOTE: Report ID is NOT included - Report Reference descriptor identifies the report.
     pub fn to_bytes(&self) -> [u8; 15] {
         [
-            // Buttons (2 bytes: 12 buttons + 4 padding bits)
+            // Buttons (2 bytes: 16 buttons including D-pad)
             (self.buttons & 0xFF) as u8,
-            ((self.buttons >> 8) & 0x0F) as u8,  // Only lower 4 bits used, upper 4 are padding
+            ((self.buttons >> 8) & 0xFF) as u8,
             // Hat switch (1 byte: 4 bits value + 4 bits padding)
             self.hat & 0x0F,  // Lower 4 bits = hat value, upper 4 bits = padding (0)
             // Left stick X (2 bytes, little-endian)
@@ -170,12 +162,8 @@ impl GamepadReport {
             // Left stick Y (2 bytes, little-endian)
             (self.left_y as u16 & 0xFF) as u8,
             ((self.left_y as u16 >> 8) & 0xFF) as u8,
-            // Right stick X (2 bytes, little-endian)
-            (self.right_x as u16 & 0xFF) as u8,
-            ((self.right_x as u16 >> 8) & 0xFF) as u8,
-            // Right stick Y (2 bytes, little-endian)
-            (self.right_y as u16 & 0xFF) as u8,
-            ((self.right_y as u16 >> 8) & 0xFF) as u8,
+            // Right stick X/Y (4 bytes) - hardcoded to zero, Dreamcast has no right stick
+            0x00, 0x00, 0x00, 0x00,
             // Left trigger (2 bytes, little-endian)
             (self.left_trigger & 0xFF) as u8,
             ((self.left_trigger >> 8) & 0xFF) as u8,
