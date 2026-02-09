@@ -72,6 +72,13 @@ impl Bonder {
     pub fn has_bond(&self) -> bool {
         self.peer.get().is_some()
     }
+
+    /// Clear all bonding data (for sync/pairing mode)
+    pub fn clear(&self) {
+        self.peer.set(None);
+        self.sys_attrs.borrow_mut().clear();
+        self.sys_attrs_len.set(0);
+    }
 }
 
 impl Default for Bonder {

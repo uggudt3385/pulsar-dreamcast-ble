@@ -2,10 +2,10 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_nrf::gpio::{Flex, Level, Output, OutputDrive};
+use embassy_nrf::gpio::{Flex, Input, Level, Output, OutputDrive, Pull};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use nrf_softdevice::ble::gatt_server;
 use nrf_softdevice::ble::security::SecurityHandler;
 use nrf_softdevice::Softdevice;
@@ -17,12 +17,19 @@ mod ble;
 mod board;
 mod maple;
 
-use crate::ble::{init_softdevice, Bonder, GamepadServer};
+use crate::ble::{
+    init_softdevice, advertise, AdvertiseMode,
+    ConnectionState, get_connection_state, set_connection_state,
+    Bonder, GamepadServer,
+};
 use crate::maple::host::MapleResult;
 use crate::maple::{ControllerState, MapleBus, MapleHost};
 
 /// Shared controller state between maple and BLE tasks.
 static CONTROLLER_STATE: Signal<CriticalSectionRawMutex, ControllerState> = Signal::new();
+
+/// Signal to trigger sync/pairing mode (clears bonds).
+static SYNC_MODE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
@@ -69,16 +76,22 @@ async fn main(spawner: Spawner) {
     }
 
     // LEDs (active low on DK)
-    let mut led1 = Output::new(p.P0_13, Level::High, OutputDrive::Standard);
+    let led1 = Output::new(p.P0_13, Level::High, OutputDrive::Standard);
     let mut led2 = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
     let mut led3 = Output::new(p.P0_15, Level::High, OutputDrive::Standard);
     let mut led4 = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
 
-    // Startup blink
+    // Sync button (Button 4 on DK = P0.25, active low) with LED1 for feedback
+    let sync_button = Input::new(p.P0_25, Pull::Up);
+    if let Ok(token) = sync_button_task(sync_button, led1) {
+        spawner.spawn(token);
+    }
+
+    // Startup blink (use LED2 since LED1 is owned by sync task)
     for _ in 0..3 {
-        led1.set_low();
+        led2.set_low();
         Timer::after(Duration::from_millis(100)).await;
-        led1.set_high();
+        led2.set_high();
         Timer::after(Duration::from_millis(100)).await;
     }
 
@@ -115,13 +128,6 @@ async fn main(spawner: Spawner) {
 
     loop {
         if let MapleResult::Ok(state) = host.get_condition(&mut bus) {
-            // LED1 on when any button pressed
-            if state.buttons.any_pressed() {
-                led1.set_low();
-            } else {
-                led1.set_high();
-            }
-
             // Only signal when state changes
             let changed = match &last_state {
                 None => true,
@@ -145,6 +151,12 @@ async fn softdevice_task(sd: &'static Softdevice) {
 }
 
 /// BLE advertising and connection handling task.
+///
+/// State machine:
+/// - Reconnecting (60s): Try to connect to bonded device only
+/// - Idle: Continue trying bonded device (not discoverable)
+/// - SyncMode (60s): Discoverable to all, accepts new pairings
+/// - Connected: Active connection
 #[embassy_executor::task]
 async fn ble_task(
     sd: &'static Softdevice,
@@ -153,63 +165,266 @@ async fn ble_task(
 ) {
     let mut flash = nrf_softdevice::Flash::take(sd);
 
+    // Reconnect timeout: 60 seconds
+    const RECONNECT_TIMEOUT_MS: u64 = 60_000;
+    // Sync mode timeout: 60 seconds
+    const SYNC_TIMEOUT_MS: u64 = 60_000;
+
     loop {
-        let conn = match ble::softdevice::advertise(sd, server, bonder).await {
-            Ok(c) => c,
-            Err(_) => {
-                Timer::after(Duration::from_secs(1)).await;
-                continue;
-            }
-        };
+        let state = get_connection_state();
 
-        bonder.load_sys_attrs(&conn);
-        Timer::after(Duration::from_millis(100)).await;
-        let _ = conn.request_security();
+        match state {
+            ConnectionState::Reconnecting | ConnectionState::Idle => {
+                // Try to reconnect to bonded device (not discoverable)
+                let conn = if bonder.has_bond() {
+                    // Have a bonded device - advertise in reconnect mode (not discoverable)
+                    let start = Instant::now();
 
-        // Run GATT server while connected
-        let gatt_future = gatt_server::run(&conn, server, |_| {});
+                    loop {
+                        // Check for sync mode signal
+                        let adv_future = advertise(sd, server, bonder, AdvertiseMode::Reconnect);
+                        let sync_future = SYNC_MODE.wait();
 
-        // Notification sender - polls CONTROLLER_STATE and sends HID reports
-        let notify_future = async {
-            // Wait for client to discover services and subscribe
-            Timer::after(Duration::from_millis(5000)).await;
-
-            let mut last_report: Option<[u8; 8]> = None;
-
-            loop {
-                let state = CONTROLLER_STATE.wait().await;
-                let report = state.to_gamepad_report();
-                let report_bytes = report.to_bytes();
-
-                let should_notify = match &last_report {
-                    None => true,
-                    Some(prev) => prev != &report_bytes,
+                        match embassy_futures::select::select(adv_future, sync_future).await {
+                            embassy_futures::select::Either::First(result) => {
+                                match result {
+                                    Ok(c) => break Some(c),
+                                    Err(_) => {
+                                        // Check timeout in Reconnecting state
+                                        if get_connection_state() == ConnectionState::Reconnecting
+                                            && start.elapsed().as_millis() >= RECONNECT_TIMEOUT_MS
+                                        {
+                                            rprintln!("BLE: Reconnect timeout, entering idle");
+                                            set_connection_state(ConnectionState::Idle);
+                                        }
+                                        Timer::after(Duration::from_millis(500)).await;
+                                        continue;
+                                    }
+                                }
+                            }
+                            embassy_futures::select::Either::Second(()) => {
+                                // Sync mode triggered
+                                rprintln!("BLE: Sync mode requested");
+                                bonder.clear();
+                                let _ = crate::ble::flash_bond::clear_bond(&mut flash).await;
+                                set_connection_state(ConnectionState::SyncMode);
+                                break None;
+                            }
+                        }
+                    }
+                } else {
+                    // No bonded device - wait for sync mode
+                    rprintln!("BLE: No bond, waiting for sync mode");
+                    set_connection_state(ConnectionState::Idle);
+                    SYNC_MODE.wait().await;
+                    rprintln!("BLE: Sync mode requested (no prior bond)");
+                    set_connection_state(ConnectionState::SyncMode);
+                    None
                 };
 
-                if should_notify {
-                    let _ = server.hid.report_set(&report_bytes);
-                    let _ = server.send_report(&conn, &report);
-                    last_report = Some(report_bytes);
+                if let Some(conn) = conn {
+                    // Connected!
+                    set_connection_state(ConnectionState::Connected);
+                    handle_connection(sd, server, bonder, &mut flash, conn).await;
+                    // After disconnect, go back to reconnecting
+                    set_connection_state(ConnectionState::Reconnecting);
                 }
-
-                Timer::after(Duration::from_millis(8)).await;
             }
-        };
 
-        // Run both until one completes (connection drops)
-        embassy_futures::select::select(gatt_future, notify_future).await;
+            ConnectionState::SyncMode => {
+                // Sync mode: discoverable to all for 60 seconds
+                let start = Instant::now();
 
-        // Save system attributes and bond to flash
-        bonder.save_sys_attrs(&conn);
-        if let Some((master_id, enc_info, peer_id)) = bonder.get_bond_data() {
-            let sys_attrs = bonder.get_sys_attrs();
-            let _ = crate::ble::flash_bond::save_bond(
-                &mut flash, &master_id, &enc_info, &peer_id, &sys_attrs,
-            )
-            .await;
+                let conn = loop {
+                    if start.elapsed().as_millis() >= SYNC_TIMEOUT_MS {
+                        rprintln!("BLE: Sync mode timeout");
+                        // Return to appropriate state
+                        if bonder.has_bond() {
+                            set_connection_state(ConnectionState::Reconnecting);
+                        } else {
+                            set_connection_state(ConnectionState::Idle);
+                        }
+                        break None;
+                    }
+
+                    let adv_future = advertise(sd, server, bonder, AdvertiseMode::SyncMode);
+
+                    match embassy_time::with_timeout(
+                        Duration::from_secs(5),
+                        adv_future
+                    ).await {
+                        Ok(Ok(c)) => break Some(c),
+                        Ok(Err(_)) | Err(_) => {
+                            // Timeout or error, keep trying
+                            continue;
+                        }
+                    }
+                };
+
+                if let Some(conn) = conn {
+                    set_connection_state(ConnectionState::Connected);
+                    handle_connection(sd, server, bonder, &mut flash, conn).await;
+                    set_connection_state(ConnectionState::Reconnecting);
+                }
+            }
+
+            ConnectionState::Connected => {
+                // Shouldn't get here, but handle it
+                Timer::after(Duration::from_millis(100)).await;
+            }
+        }
+    }
+}
+
+/// Handle an active BLE connection.
+async fn handle_connection(
+    _sd: &'static Softdevice,
+    server: &'static GamepadServer,
+    bonder: &'static Bonder,
+    flash: &mut nrf_softdevice::Flash,
+    conn: nrf_softdevice::ble::Connection,
+) {
+    rprintln!("BLE: Connected!");
+
+    bonder.load_sys_attrs(&conn);
+    Timer::after(Duration::from_millis(100)).await;
+    let _ = conn.request_security();
+
+    // Run GATT server while connected
+    let gatt_future = gatt_server::run(&conn, server, |_| {});
+
+    // Notification sender - sends HID reports at fixed interval (like real controllers)
+    let notify_future = async {
+        // Wait for client to discover services and subscribe
+        Timer::after(Duration::from_millis(5000)).await;
+
+        let mut current_state = ControllerState::default();
+
+        loop {
+            // Check for new state (non-blocking via try semantics)
+            // We use signaled() to check without blocking, then reset
+            if CONTROLLER_STATE.signaled() {
+                current_state = CONTROLLER_STATE.wait().await;
+            }
+
+            // Always send reports at fixed interval (8ms ≈ 125Hz)
+            let report = current_state.to_gamepad_report();
+            let report_bytes = report.to_bytes();
+            let _ = server.hid.report_set(&report_bytes);
+            let _ = server.send_report(&conn, &report);
+
+            Timer::after(Duration::from_millis(8)).await;
+        }
+    };
+
+    // Run both until one completes (connection drops)
+    embassy_futures::select::select(gatt_future, notify_future).await;
+
+    rprintln!("BLE: Disconnected");
+
+    // Save system attributes and bond to flash
+    bonder.save_sys_attrs(&conn);
+    if let Some((master_id, enc_info, peer_id)) = bonder.get_bond_data() {
+        let sys_attrs = bonder.get_sys_attrs();
+        let _ = crate::ble::flash_bond::save_bond(
+            flash, &master_id, &enc_info, &peer_id, &sys_attrs,
+        )
+        .await;
+    }
+
+    Timer::after(Duration::from_millis(500)).await;
+}
+
+/// Sync button monitoring task - hold Button 4 for 3 seconds to enter pairing mode.
+///
+/// LED1 behavior based on ConnectionState:
+/// - Idle/Reconnecting: OFF
+/// - SyncMode: Fast blink (200ms on/off)
+/// - Connected: Solid ON
+#[embassy_executor::task]
+async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) {
+    const HOLD_DURATION_MS: u64 = 3000;
+    const BLINK_INTERVAL_MS: u64 = 100;
+
+    loop {
+        let state = get_connection_state();
+
+        // Update LED based on state
+        match state {
+            ConnectionState::Connected => {
+                led.set_low(); // LED on (active low)
+            }
+            ConnectionState::SyncMode => {
+                // Fast blink handled below when not checking button
+                led.set_low();
+                Timer::after(Duration::from_millis(200)).await;
+                led.set_high();
+                Timer::after(Duration::from_millis(200)).await;
+
+                // Check for button press to cancel sync mode early
+                if button.is_low() {
+                    Timer::after(Duration::from_millis(100)).await;
+                    if button.is_low() {
+                        rprintln!("SYNC: Cancelled by button press");
+                        // Return to appropriate state
+                        // Note: The ble_task will handle the state change on timeout
+                        // We just let the current sync cycle finish
+                        while button.is_low() {
+                            Timer::after(Duration::from_millis(50)).await;
+                        }
+                    }
+                }
+                continue; // Skip the button hold detection below
+            }
+            ConnectionState::Idle | ConnectionState::Reconnecting => {
+                led.set_high(); // LED off
+            }
         }
 
-        Timer::after(Duration::from_millis(500)).await;
+        // Check for button press (active low)
+        if button.is_high() {
+            Timer::after(Duration::from_millis(50)).await;
+            continue;
+        }
+
+        // Button pressed - start timing with LED feedback
+        let press_start = Instant::now();
+        let mut led_state = false;
+        let mut last_blink = Instant::now();
+
+        // Wait for either release or hold duration
+        while button.is_low() {
+            // Blink LED while holding to indicate pending action
+            if last_blink.elapsed().as_millis() >= BLINK_INTERVAL_MS {
+                led_state = !led_state;
+                if led_state {
+                    led.set_low(); // LED on
+                } else {
+                    led.set_high(); // LED off
+                }
+                last_blink = Instant::now();
+            }
+
+            if press_start.elapsed().as_millis() >= HOLD_DURATION_MS {
+                // Held long enough - trigger sync mode
+                rprintln!("SYNC: Entering pairing mode (60s)");
+                SYNC_MODE.signal(());
+
+                // Wait for button release
+                while button.is_low() {
+                    // Keep blinking
+                    led.set_low();
+                    Timer::after(Duration::from_millis(100)).await;
+                    led.set_high();
+                    Timer::after(Duration::from_millis(100)).await;
+                }
+                break;
+            }
+            Timer::after(Duration::from_millis(20)).await;
+        }
+
+        // Debounce
+        Timer::after(Duration::from_millis(100)).await;
     }
 }
 

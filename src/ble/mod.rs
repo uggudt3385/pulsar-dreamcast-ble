@@ -10,4 +10,7 @@ pub mod softdevice;
 
 pub use hid::GamepadServer;
 pub use security::Bonder;
-pub use softdevice::init_softdevice;
+pub use softdevice::{
+    init_softdevice, advertise,
+    AdvertiseMode, ConnectionState, get_connection_state, set_connection_state,
+};

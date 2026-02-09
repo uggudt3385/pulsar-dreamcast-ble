@@ -1,11 +1,51 @@
 //! SoftDevice initialization and BLE advertising.
 
-use nrf_softdevice::ble::{gatt_server, peripheral, Connection};
+use core::sync::atomic::{AtomicU8, Ordering};
+use nrf_softdevice::ble::{peripheral, Connection};
 use nrf_softdevice::{raw, Softdevice};
 use rtt_target::rprintln;
 
 use crate::ble::hid::GamepadServer;
 use crate::ble::security::Bonder;
+
+/// Connection state machine states.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum ConnectionState {
+    /// Power-on: trying to reconnect to bonded device (60s timeout)
+    Reconnecting = 0,
+    /// No connection, not advertising (after reconnect timeout)
+    Idle = 1,
+    /// User-initiated sync mode: discoverable to all (60s timeout)
+    SyncMode = 2,
+    /// Connected to a device
+    Connected = 3,
+}
+
+impl From<u8> for ConnectionState {
+    fn from(v: u8) -> Self {
+        match v {
+            0 => Self::Reconnecting,
+            1 => Self::Idle,
+            2 => Self::SyncMode,
+            3 => Self::Connected,
+            _ => Self::Idle,
+        }
+    }
+}
+
+/// Global connection state (atomic for cross-task access).
+static CONNECTION_STATE: AtomicU8 = AtomicU8::new(ConnectionState::Reconnecting as u8);
+
+/// Get current connection state.
+pub fn get_connection_state() -> ConnectionState {
+    CONNECTION_STATE.load(Ordering::Relaxed).into()
+}
+
+/// Set connection state.
+pub fn set_connection_state(state: ConnectionState) {
+    CONNECTION_STATE.store(state as u8, Ordering::Relaxed);
+}
 
 /// SoftDevice configuration for BLE peripheral mode.
 fn softdevice_config() -> nrf_softdevice::Config {
@@ -32,9 +72,9 @@ fn softdevice_config() -> nrf_softdevice::Config {
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: b"DC Controller\0" as *const u8 as _,
-            current_len: 13,
-            max_len: 13,
+            p_value: b"Dreamcast Wireless Controller\0" as *const u8 as _,
+            current_len: 29,
+            max_len: 29,
             write_perm: raw::ble_gap_conn_sec_mode_t {
                 _bitfield_1: raw::ble_gap_conn_sec_mode_t::new_bitfield_1(0, 0),
             },
@@ -55,11 +95,11 @@ pub fn init_softdevice() -> &'static mut Softdevice {
     Softdevice::enable(&config)
 }
 
-/// BLE advertising data (raw bytes).
+/// BLE advertising data for sync mode - General Discoverable.
+/// This makes the device visible in Bluetooth menus on Mac/iPhone/etc.
 /// Format: [length, type, data...] for each AD structure
-/// Length = size of (type + data), NOT including length byte itself
 #[rustfmt::skip]
-static ADV_DATA: [u8; 13] = [
+static ADV_DATA_SYNC: [u8; 13] = [
     // Flags AD structure
     0x02,              // Length: 2 bytes follow
     0x01,              // AD Type: Flags
@@ -77,49 +117,84 @@ static ADV_DATA: [u8; 13] = [
     0x0F, 0x18,        // Battery Service (0x180F)
 ];
 
-/// Scan response with device name.
+/// BLE advertising data for reconnect mode - NOT discoverable.
+/// Only bonded devices can connect via directed advertising.
 #[rustfmt::skip]
-static SCAN_DATA: [u8; 17] = [
-    // Complete Local Name
-    0x10,              // Length: 16 bytes follow (1 type + 15 name chars)
-    0x09,              // AD Type: Complete Local Name
-    b'D', b'C', b' ', b'C', b'o', b'n', b't', b'r', b'o', b'l', b'l', b'e', b'r', b' ', b' ',
+static ADV_DATA_RECONNECT: [u8; 13] = [
+    // Flags AD structure - NOT discoverable
+    0x02,              // Length: 2 bytes follow
+    0x01,              // AD Type: Flags
+    0x04,              // Flags: BR/EDR Not Supported (no discoverable flag)
+
+    // Appearance AD structure (Gamepad = 0x03C4)
+    0x03,              // Length: 3 bytes follow
+    0x19,              // AD Type: Appearance
+    0xC4, 0x03,        // Appearance: Gamepad (0x03C4 little-endian)
+
+    // Complete list of 16-bit service UUIDs
+    0x05,              // Length: 5 bytes follow
+    0x03,              // AD Type: Complete List of 16-bit Service UUIDs
+    0x12, 0x18,        // HID Service (0x1812)
+    0x0F, 0x18,        // Battery Service (0x180F)
 ];
 
-/// Start BLE advertising as HID Gamepad with security/bonding support.
+/// Scan response with device name.
+#[rustfmt::skip]
+static SCAN_DATA: [u8; 31] = [
+    // Complete Local Name
+    0x1E,              // Length: 30 bytes follow (1 type + 29 name chars)
+    0x09,              // AD Type: Complete Local Name
+    b'D', b'r', b'e', b'a', b'm', b'c', b'a', b's', b't', b' ',
+    b'W', b'i', b'r', b'e', b'l', b'e', b's', b's', b' ',
+    b'C', b'o', b'n', b't', b'r', b'o', b'l', b'l', b'e', b'r',
+];
+
+/// Advertising mode determines visibility and connection behavior.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum AdvertiseMode {
+    /// Sync mode: visible to all devices, fast advertising
+    SyncMode,
+    /// Reconnect mode: only bonded device can connect (not visible to others)
+    Reconnect,
+}
+
+/// Start BLE advertising based on mode.
+///
+/// - SyncMode: General Discoverable, visible in Bluetooth menus, accepts any pairing
+/// - Reconnect: Not discoverable (won't appear in Bluetooth scans), but bonded device can reconnect
 pub async fn advertise(
     sd: &'static Softdevice,
     _server: &GamepadServer,
     bonder: &'static Bonder,
+    mode: AdvertiseMode,
 ) -> Result<Connection, peripheral::AdvertiseError> {
-    let config = peripheral::Config::default();
+    let (adv_data, config, log_msg) = match mode {
+        AdvertiseMode::SyncMode => {
+            // Sync mode: Fast advertising, discoverable, no timeout
+            let config = peripheral::Config {
+                interval: 32, // 32 * 0.625ms = 20ms (fast)
+                timeout: None,
+                ..Default::default()
+            };
+            (&ADV_DATA_SYNC, config, "BLE: Advertising (SYNC MODE - discoverable)")
+        }
+        AdvertiseMode::Reconnect => {
+            // Reconnect mode: Slower advertising, NOT discoverable
+            // Device won't appear in Bluetooth scans, but bonded devices can still connect
+            let config = peripheral::Config {
+                interval: 160, // 160 * 0.625ms = 100ms (slower to save power)
+                timeout: None,
+                ..Default::default()
+            };
+            (&ADV_DATA_RECONNECT, config, "BLE: Advertising (reconnect - not discoverable)")
+        }
+    };
+
     let adv = peripheral::ConnectableAdvertisement::ScannableUndirected {
-        adv_data: &ADV_DATA,
+        adv_data,
         scan_data: &SCAN_DATA,
     };
 
-    rprintln!("BLE: Advertising (pairable)...");
+    rprintln!("{}", log_msg);
     peripheral::advertise_pairable(sd, adv, &config, bonder).await
-}
-
-/// Run the GATT server for a connection.
-#[allow(dead_code)]
-pub async fn run_gatt_server(
-    _sd: &'static Softdevice,
-    conn: Connection,
-    server: &GamepadServer,
-) {
-    rprintln!("BLE: Client connected");
-
-    let err = gatt_server::run(&conn, server, |event| {
-        // Handle GATT events (read/write requests)
-        match event {
-            crate::ble::hid::GamepadServerEvent::Hid(_) => {}
-            crate::ble::hid::GamepadServerEvent::DeviceInfo(_) => {}
-            crate::ble::hid::GamepadServerEvent::Battery(_) => {}
-        }
-    })
-    .await;
-
-    rprintln!("BLE: GATT server ended: {:?}", err);
 }

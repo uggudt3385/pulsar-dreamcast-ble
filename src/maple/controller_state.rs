@@ -140,17 +140,17 @@ impl ControllerState {
         ]
     }
 
-    /// Convert to HID Gamepad report.
+    /// Convert to HID Gamepad report (Xbox-compatible 16-bit format).
     ///
     /// Mapping:
     /// - Dreamcast A/B/X/Y → Buttons 0-3
     /// - Dreamcast Start → Button 7
-    /// - Dreamcast D-pad → Buttons 12-15 (Up, Down, Left, Right)
-    /// - Dreamcast analog stick → Left stick (signed, -127 to 127)
-    /// - Dreamcast L/R triggers → Trigger axes (signed, -127 to 127)
+    /// - Dreamcast D-pad → Hat switch (0-7 directions, 8=neutral)
+    /// - Dreamcast analog stick → Left stick (16-bit signed, -32768 to 32767)
+    /// - Dreamcast L/R triggers → Trigger axes (10-bit unsigned, 0 to 1023)
     /// - Right stick always centered (Dreamcast doesn't have one)
     pub fn to_gamepad_report(&self) -> crate::ble::hid::GamepadReport {
-        use crate::ble::hid::{buttons, GamepadReport};
+        use crate::ble::hid::{buttons, hat, GamepadReport};
 
         let mut btns: u16 = 0;
         if self.buttons.a {
@@ -168,32 +168,52 @@ impl ControllerState {
         if self.buttons.start {
             btns |= buttons::START;
         }
-        // D-pad as buttons 12-15
-        if self.buttons.dpad_up {
-            btns |= buttons::DPAD_UP;
-        }
-        if self.buttons.dpad_down {
-            btns |= buttons::DPAD_DOWN;
-        }
-        if self.buttons.dpad_left {
-            btns |= buttons::DPAD_LEFT;
-        }
-        if self.buttons.dpad_right {
-            btns |= buttons::DPAD_RIGHT;
-        }
 
-        // Convert unsigned 0-255 (center=128) to signed -127 to 127 (center=0)
-        let left_x = (self.stick_x as i16 - 128).clamp(-127, 127) as i8;
-        let left_y = (self.stick_y as i16 - 128).clamp(-127, 127) as i8;
+        // Convert D-pad to hat switch
+        // Hat: 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW, 8=neutral
+        let hat_value = match (
+            self.buttons.dpad_up,
+            self.buttons.dpad_down,
+            self.buttons.dpad_left,
+            self.buttons.dpad_right,
+        ) {
+            (true, false, false, false) => hat::NORTH,      // Up
+            (true, false, false, true) => hat::NORTH_EAST,  // Up + Right
+            (false, false, false, true) => hat::EAST,       // Right
+            (false, true, false, true) => hat::SOUTH_EAST,  // Down + Right
+            (false, true, false, false) => hat::SOUTH,      // Down
+            (false, true, true, false) => hat::SOUTH_WEST,  // Down + Left
+            (false, false, true, false) => hat::WEST,       // Left
+            (true, false, true, false) => hat::NORTH_WEST,  // Up + Left
+            _ => hat::NEUTRAL,                               // No direction or invalid combo
+        };
 
-        // Convert triggers: 0-255 → -127 to 127
-        // Dreamcast: 0=pressed, 255=released (after inversion in from_payload)
-        // We need: -127=released, 127=pressed, so invert the mapping
-        let left_trigger = (128i16 - self.trigger_l as i16).clamp(-127, 127) as i8;
-        let right_trigger = (128i16 - self.trigger_r as i16).clamp(-127, 127) as i8;
+        // Convert unsigned 0-255 (center=128) to signed 16-bit (center=0)
+        // Scale from 8-bit range to 16-bit range: multiply by 256
+        // Apply deadzone to prevent drift from imprecise center position
+        const DEADZONE: i16 = 10;
+        let raw_x = self.stick_x as i16 - 128;
+        let raw_y = self.stick_y as i16 - 128;
+        let left_x: i16 = if raw_x.abs() < DEADZONE {
+            0
+        } else {
+            (raw_x as i32 * 256).clamp(-32768, 32767) as i16
+        };
+        let left_y: i16 = if raw_y.abs() < DEADZONE {
+            0
+        } else {
+            (raw_y as i32 * 256).clamp(-32768, 32767) as i16
+        };
+
+        // Convert triggers: 0-255 → 0-1023 (10-bit, Xbox-compatible)
+        // trigger_l/r after from_payload: 0=released, 255=fully pressed
+        // HID expects: 0=released, 1023=fully pressed
+        let left_trigger = (self.trigger_l as u32 * 4) as u16;
+        let right_trigger = (self.trigger_r as u32 * 4) as u16;
 
         GamepadReport {
             buttons: btns,
+            hat: hat_value,
             left_x,
             left_y,
             right_x: 0,  // Centered - Dreamcast has no right stick
@@ -224,13 +244,10 @@ impl ControllerState {
 
         // Word 1 format (bytes on wire): [trig_L, trig_R, btn_low, btn_high]
         // Assembled: trig_L | (trig_R << 8) | (btn_low << 16) | (btn_high << 24)
-        // Triggers are inverted: 0xFF = released, 0x00 = fully pressed
+        // Raw values: 0x00 = released, 0xFF = fully pressed (no inversion needed)
         let word1 = payload[1];
-        let trigger_l_raw = (word1 & 0xFF) as u8;
-        let trigger_r_raw = ((word1 >> 8) & 0xFF) as u8;
-        // Invert triggers: 0xFF->0, 0x00->255
-        let trigger_l = 255 - trigger_l_raw;
-        let trigger_r = 255 - trigger_r_raw;
+        let trigger_l = (word1 & 0xFF) as u8;
+        let trigger_r = ((word1 >> 8) & 0xFF) as u8;
 
         // Buttons in upper 16 bits, bytes swapped
         let buttons_word = ((word1 >> 16) & 0xFFFF) as u16;

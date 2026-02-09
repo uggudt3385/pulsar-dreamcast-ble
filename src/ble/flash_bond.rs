@@ -97,6 +97,15 @@ pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u
     Some((master_id, enc_info, peer_id, sys_attrs))
 }
 
+/// Clear bonding data from flash (for sync/pairing mode)
+pub async fn clear_bond(flash: &mut Flash) -> Result<(), ()> {
+    // Erase the flash page - this invalidates the magic number
+    flash
+        .erase(BOND_FLASH_ADDR, BOND_FLASH_ADDR + PAGE_SIZE)
+        .await
+        .map_err(|_| ())
+}
+
 /// Save bonding data to flash
 pub async fn save_bond(
     flash: &mut Flash,
