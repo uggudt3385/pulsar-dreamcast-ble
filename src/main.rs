@@ -18,9 +18,8 @@ mod board;
 mod maple;
 
 use crate::ble::{
-    init_softdevice, advertise, AdvertiseMode,
-    ConnectionState, get_connection_state, set_connection_state,
-    Bonder, GamepadServer,
+    advertise, get_connection_state, init_softdevice, set_connection_state, AdvertiseMode, Bonder,
+    ConnectionState, GamepadServer,
 };
 use crate::maple::host::MapleResult;
 use crate::maple::{ControllerState, MapleBus, MapleHost};
@@ -258,10 +257,7 @@ async fn ble_task(
 
                     let adv_future = advertise(sd, server, bonder, AdvertiseMode::SyncMode);
 
-                    match embassy_time::with_timeout(
-                        Duration::from_secs(5),
-                        adv_future
-                    ).await {
+                    match embassy_time::with_timeout(Duration::from_secs(5), adv_future).await {
                         Ok(Ok(c)) => break Some(c),
                         Ok(Err(_)) | Err(_) => {
                             // Timeout or error, keep trying
@@ -299,6 +295,20 @@ async fn handle_connection(
     Timer::after(Duration::from_millis(100)).await;
     let _ = conn.request_security();
 
+    // Request Xbox-like connection parameters for ~100Hz polling
+    Timer::after(Duration::from_millis(500)).await;
+    if let Some(handle) = conn.handle() {
+        let conn_params = nrf_softdevice::raw::ble_gap_conn_params_t {
+            min_conn_interval: 7, // 8.75ms
+            max_conn_interval: 9, // 11.25ms
+            slave_latency: 0,
+            conn_sup_timeout: 400, // 4000ms
+        };
+        unsafe {
+            let _ = nrf_softdevice::raw::sd_ble_gap_conn_param_update(handle, &conn_params);
+        }
+    }
+
     // Run GATT server while connected
     let gatt_future = gatt_server::run(&conn, server, |_| {});
 
@@ -335,10 +345,9 @@ async fn handle_connection(
     bonder.save_sys_attrs(&conn);
     if let Some((master_id, enc_info, peer_id)) = bonder.get_bond_data() {
         let sys_attrs = bonder.get_sys_attrs();
-        let _ = crate::ble::flash_bond::save_bond(
-            flash, &master_id, &enc_info, &peer_id, &sys_attrs,
-        )
-        .await;
+        let _ =
+            crate::ble::flash_bond::save_bond(flash, &master_id, &enc_info, &peer_id, &sys_attrs)
+                .await;
     }
 
     Timer::after(Duration::from_millis(500)).await;

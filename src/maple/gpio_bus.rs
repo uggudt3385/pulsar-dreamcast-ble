@@ -71,8 +71,10 @@ impl MapleBus {
 
     /// Configure pins as outputs (push-pull).
     pub fn set_output_mode(&mut self) {
-        self.sdcka.set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
-        self.sdckb.set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
+        self.sdcka
+            .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
+        self.sdckb
+            .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
     }
 
     /// Configure pins as inputs with pull-up.

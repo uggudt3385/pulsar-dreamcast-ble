@@ -58,11 +58,11 @@ fn softdevice_config() -> nrf_softdevice::Config {
         }),
         conn_gap: Some(raw::ble_gap_conn_cfg_t {
             conn_count: 1,
-            event_length: 24, // 24 * 1.25ms = 30ms
+            event_length: 6, // Allow short events for fast intervals
         }),
         conn_gatt: Some(raw::ble_gatt_conn_cfg_t { att_mtu: 64 }),
         gatts_attr_tab_size: Some(raw::ble_gatts_cfg_attr_tab_size_t {
-            attr_tab_size: 1024,
+            attr_tab_size: 2048,
         }),
         gap_role_count: Some(raw::ble_gap_cfg_role_count_t {
             adv_set_count: 1,
@@ -72,9 +72,9 @@ fn softdevice_config() -> nrf_softdevice::Config {
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: b"Dreamcast Wireless Controller\0" as *const u8 as _,
-            current_len: 29,
-            max_len: 29,
+            p_value: b"Xbox Wireless Controller\0" as *const u8 as _,
+            current_len: 24,
+            max_len: 24,
             write_perm: raw::ble_gap_conn_sec_mode_t {
                 _bitfield_1: raw::ble_gap_conn_sec_mode_t::new_bitfield_1(0, 0),
             },
@@ -138,13 +138,13 @@ static ADV_DATA_RECONNECT: [u8; 13] = [
     0x0F, 0x18,        // Battery Service (0x180F)
 ];
 
-/// Scan response with device name.
+/// Scan response with device name (Xbox Wireless Controller).
 #[rustfmt::skip]
-static SCAN_DATA: [u8; 31] = [
+static SCAN_DATA: [u8; 26] = [
     // Complete Local Name
-    0x1E,              // Length: 30 bytes follow (1 type + 29 name chars)
+    0x19,              // Length: 25 bytes follow (1 type + 24 name chars)
     0x09,              // AD Type: Complete Local Name
-    b'D', b'r', b'e', b'a', b'm', b'c', b'a', b's', b't', b' ',
+    b'X', b'b', b'o', b'x', b' ',
     b'W', b'i', b'r', b'e', b'l', b'e', b's', b's', b' ',
     b'C', b'o', b'n', b't', b'r', b'o', b'l', b'l', b'e', b'r',
 ];
@@ -176,7 +176,11 @@ pub async fn advertise(
                 timeout: None,
                 ..Default::default()
             };
-            (&ADV_DATA_SYNC, config, "BLE: Advertising (SYNC MODE - discoverable)")
+            (
+                &ADV_DATA_SYNC,
+                config,
+                "BLE: Advertising (SYNC MODE - discoverable)",
+            )
         }
         AdvertiseMode::Reconnect => {
             // Reconnect mode: Slower advertising, NOT discoverable
@@ -186,7 +190,11 @@ pub async fn advertise(
                 timeout: None,
                 ..Default::default()
             };
-            (&ADV_DATA_RECONNECT, config, "BLE: Advertising (reconnect - not discoverable)")
+            (
+                &ADV_DATA_RECONNECT,
+                config,
+                "BLE: Advertising (reconnect - not discoverable)",
+            )
         }
     };
 

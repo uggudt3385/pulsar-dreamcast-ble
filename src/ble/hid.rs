@@ -1,82 +1,218 @@
 //! HID over GATT (HOG) implementation for gamepad.
 //!
-//! Implements standard BLE HID service with Xbox-compatible gamepad layout.
+//! Implements Xbox One S BLE HID format (Model 1708, PID 0x02E0).
 
 use heapless::Vec;
 use nrf_softdevice::ble::gatt_server::{NotifyValueError, SetValueError};
 use nrf_softdevice::ble::Connection;
 
-/// HID Report Descriptor for gamepad (Xbox-compatible layout).
+/// HID Report Descriptor for Xbox One S BLE controller format.
 ///
-/// Layout (15 bytes total):
-/// - 12 buttons + 4 padding (2 bytes)
-/// - Hat switch / D-pad (1 byte: 4 bits value + 4 bits padding)
-/// - Left stick X/Y: 16-bit signed each (4 bytes)
-/// - Right stick X/Y: 16-bit signed each (4 bytes)
-/// - Left trigger: 16-bit unsigned (2 bytes)
-/// - Right trigger: 16-bit unsigned (2 bytes)
+/// Uses xpadneo-patched usage convention for broad HID parser compatibility:
+///   - Left stick:  X (0x30) / Y (0x31)    — Generic Desktop
+///   - Right stick:  Rx (0x33) / Ry (0x34)  — Generic Desktop
+///   - Triggers:    Z (0x32) / Rz (0x35)    — Generic Desktop
+///
+/// Report ID 0x01 - Main input (16 bytes):
+///   Bytes 0-1:   Left Stick X   (uint16, 0-65535, center=32768)
+///   Bytes 2-3:   Left Stick Y   (uint16, 0-65535, center=32768)
+///   Bytes 4-5:   Right Stick X  (uint16, 0-65535, center=32768)
+///   Bytes 6-7:   Right Stick Y  (uint16, 0-65535, center=32768)
+///   Bytes 8-9:   Left Trigger   (10-bit 0-1023 + 6-bit padding)
+///   Bytes 10-11: Right Trigger  (10-bit 0-1023 + 6-bit padding)
+///   Byte 12:     Hat Switch     (4-bit 1-8, 0=null + 4-bit padding)
+///   Bytes 13-14: Buttons 1-15   (15 bits + 1-bit padding)
+///   Byte 15:     AC Back        (1 bit + 7-bit padding)
+///
+/// Report ID 0x02 - Xbox/Guide button (1 byte):
+///   Byte 0: AC Home (1 bit + 7-bit padding)
+///
+/// Report ID 0x03 - Force feedback output (9 bytes, host→device)
 #[rustfmt::skip]
 pub const HID_REPORT_DESCRIPTOR: &[u8] = &[
     0x05, 0x01,        // Usage Page (Generic Desktop)
     0x09, 0x05,        // Usage (Gamepad)
     0xA1, 0x01,        // Collection (Application)
 
-    // Report ID 1
+    // === Report ID 0x01: Main Gamepad Input ===
     0x85, 0x01,        //   Report ID (1)
 
-    // 16 Buttons (2 bytes) - includes D-pad as buttons 13-16
-    0x05, 0x09,        //   Usage Page (Button)
-    0x19, 0x01,        //   Usage Minimum (Button 1)
-    0x29, 0x10,        //   Usage Maximum (Button 16)
-    0x15, 0x00,        //   Logical Minimum (0)
-    0x25, 0x01,        //   Logical Maximum (1)
-    0x75, 0x01,        //   Report Size (1)
-    0x95, 0x10,        //   Report Count (16)
-    0x81, 0x02,        //   Input (Data, Variable, Absolute)
+    // Left Stick (Physical collection, unsigned 16-bit)
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x09, 0x30,        //     Usage (X)
+    0x09, 0x31,        //     Usage (Y)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00, //  Logical Maximum (65535)
+    0x95, 0x02,        //     Report Count (2)
+    0x75, 0x10,        //     Report Size (16)
+    0x81, 0x02,        //     Input (Data, Variable, Absolute)
+    0xC0,              //   End Collection
 
-    // Hat Switch / D-pad (4 bits + 4 bits padding = 1 byte)
-    // Xbox One convention: 1-8 for directions, 0 for neutral
+    // Right Stick (Physical collection, unsigned 16-bit)
+    // Uses Rx/Ry (standard convention, matches xpadneo-patched Xbox descriptor)
+    0x09, 0x01,        //   Usage (Pointer)
+    0xA1, 0x00,        //   Collection (Physical)
+    0x09, 0x33,        //     Usage (Rx)
+    0x09, 0x34,        //     Usage (Ry)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x27, 0xFF, 0xFF, 0x00, 0x00, //  Logical Maximum (65535)
+    0x95, 0x02,        //     Report Count (2)
+    0x75, 0x10,        //     Report Size (16)
+    0x81, 0x02,        //     Input (Data, Variable, Absolute)
+    0xC0,              //   End Collection
+
+    // Left Trigger (Generic Desktop Z, 10-bit + 6 padding)
+    // Uses Z/Rz (standard convention, matches xpadneo-patched Xbox descriptor)
+    0x05, 0x01,        //   Usage Page (Generic Desktop)
+    0x09, 0x32,        //   Usage (Z)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x26, 0xFF, 0x03,  //   Logical Maximum (1023)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x0A,        //   Report Size (10)
+    0x81, 0x02,        //   Input (Data, Variable, Absolute)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x00,        //   Logical Maximum (0)
+    0x75, 0x06,        //   Report Size (6)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Constant) - padding
+
+    // Right Trigger (Generic Desktop Rz, 10-bit + 6 padding)
+    0x09, 0x35,        //   Usage (Rz)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x26, 0xFF, 0x03,  //   Logical Maximum (1023)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x0A,        //   Report Size (10)
+    0x81, 0x02,        //   Input (Data, Variable, Absolute)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x00,        //   Logical Maximum (0)
+    0x75, 0x06,        //   Report Size (6)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Constant) - padding
+
+    // Hat Switch / D-pad (4-bit value + 4-bit padding)
     0x05, 0x01,        //   Usage Page (Generic Desktop)
     0x09, 0x39,        //   Usage (Hat Switch)
     0x15, 0x01,        //   Logical Minimum (1)
     0x25, 0x08,        //   Logical Maximum (8)
     0x35, 0x00,        //   Physical Minimum (0)
-    0x46, 0x3B, 0x01,  //   Physical Maximum (315 degrees)
-    0x65, 0x14,        //   Unit (Eng Rot: Degree)
+    0x46, 0x3B, 0x01,  //   Physical Maximum (315)
+    0x66, 0x14, 0x00,  //   Unit (Degrees)
     0x75, 0x04,        //   Report Size (4)
     0x95, 0x01,        //   Report Count (1)
     0x81, 0x42,        //   Input (Data, Variable, Absolute, Null State)
-    // 4 bits padding
     0x75, 0x04,        //   Report Size (4)
+    0x95, 0x01,        //   Report Count (1)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x00,        //   Logical Maximum (0)
+    0x35, 0x00,        //   Physical Minimum (0)
+    0x45, 0x00,        //   Physical Maximum (0)
+    0x65, 0x00,        //   Unit (None)
+    0x81, 0x03,        //   Input (Constant) - padding
+
+    // Buttons 1-15
+    0x05, 0x09,        //   Usage Page (Button)
+    0x19, 0x01,        //   Usage Minimum (Button 1)
+    0x29, 0x0F,        //   Usage Maximum (Button 15)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x95, 0x0F,        //   Report Count (15)
+    0x81, 0x02,        //   Input (Data, Variable, Absolute)
+    // 1-bit padding
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x00,        //   Logical Maximum (0)
+    0x75, 0x01,        //   Report Size (1)
     0x95, 0x01,        //   Report Count (1)
     0x81, 0x03,        //   Input (Constant) - padding
 
-    // Left stick - 16-bit signed axes (-32768 to 32767)
-    0x05, 0x01,        //   Usage Page (Generic Desktop)
-    0x09, 0x30,        //   Usage (X) - Left stick X
-    0x09, 0x31,        //   Usage (Y) - Left stick Y
-    0x16, 0x00, 0x80,  //   Logical Minimum (-32768)
-    0x26, 0xFF, 0x7F,  //   Logical Maximum (32767)
-    0x75, 0x10,        //   Report Size (16)
-    0x95, 0x02,        //   Report Count (2)
-    0x81, 0x02,        //   Input (Data, Variable, Absolute)
-
-    // Right stick - 16-bit signed axes (-32768 to 32767)
-    0x09, 0x33,        //   Usage (Rx) - Right stick X
-    0x09, 0x34,        //   Usage (Ry) - Right stick Y
-    0x16, 0x00, 0x80,  //   Logical Minimum (-32768)
-    0x26, 0xFF, 0x7F,  //   Logical Maximum (32767)
-    0x75, 0x10,        //   Report Size (16)
-    0x95, 0x02,        //   Report Count (2)
-    0x81, 0x02,        //   Input (Data, Variable, Absolute)
-
-    // Triggers - 10-bit unsigned (0 to 1023), stored in 16-bit for alignment
-    0x09, 0x32,        //   Usage (Z) - Left trigger
-    0x09, 0x35,        //   Usage (Rz) - Right trigger
+    // AC Back (Consumer Control, 1-bit + 7-bit padding)
+    0x05, 0x0C,        //   Usage Page (Consumer)
+    0x0A, 0x24, 0x02,  //   Usage (AC Back)
     0x15, 0x00,        //   Logical Minimum (0)
-    0x26, 0xFF, 0x03,  //   Logical Maximum (1023)
-    0x75, 0x10,        //   Report Size (16)
-    0x95, 0x02,        //   Report Count (2)
+    0x25, 0x01,        //   Logical Maximum (1)
+    0x95, 0x01,        //   Report Count (1)
+    0x75, 0x01,        //   Report Size (1)
+    0x81, 0x02,        //   Input (Data, Variable, Absolute)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x25, 0x00,        //   Logical Maximum (0)
+    0x75, 0x07,        //   Report Size (7)
+    0x95, 0x01,        //   Report Count (1)
+    0x81, 0x03,        //   Input (Constant) - padding
+
+    // === Report ID 0x02: Xbox/Guide Button ===
+    0x05, 0x0C,        //   Usage Page (Consumer)
+    0x09, 0x01,        //   Usage (Consumer Control)
+    0x85, 0x02,        //   Report ID (2)
+    0xA1, 0x01,        //   Collection (Application)
+    0x05, 0x0C,        //     Usage Page (Consumer)
+    0x0A, 0x23, 0x02,  //     Usage (AC Home)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x95, 0x01,        //     Report Count (1)
+    0x75, 0x01,        //     Report Size (1)
+    0x81, 0x02,        //     Input (Data, Variable, Absolute)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x00,        //     Logical Maximum (0)
+    0x75, 0x07,        //     Report Size (7)
+    0x95, 0x01,        //     Report Count (1)
+    0x81, 0x03,        //     Input (Constant) - padding
+    0xC0,              //   End Collection
+
+    // === Report ID 0x03: Rumble Output ===
+    0x05, 0x0F,        //   Usage Page (Physical Interface Device)
+    0x09, 0x21,        //   Usage (Set Effect Report)
+    0x85, 0x03,        //   Report ID (3)
+    0xA1, 0x02,        //   Collection (Logical)
+    0x09, 0x97,        //     Usage (DC Enable Actuators)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x01,        //     Logical Maximum (1)
+    0x75, 0x04,        //     Report Size (4)
+    0x95, 0x01,        //     Report Count (1)
+    0x91, 0x02,        //     Output (Data, Variable, Absolute)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x00,        //     Logical Maximum (0)
+    0x75, 0x04,        //     Report Size (4)
+    0x95, 0x01,        //     Report Count (1)
+    0x91, 0x03,        //     Output (Constant) - padding
+    0x09, 0x70,        //     Usage (Magnitude)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x25, 0x64,        //     Logical Maximum (100)
+    0x75, 0x08,        //     Report Size (8)
+    0x95, 0x04,        //     Report Count (4)
+    0x91, 0x02,        //     Output (Data, Variable, Absolute)
+    0x09, 0x50,        //     Usage (Duration)
+    0x66, 0x01, 0x10,  //     Unit (SI Linear: Time)
+    0x55, 0x0E,        //     Unit Exponent (-2)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //     Logical Maximum (255)
+    0x75, 0x08,        //     Report Size (8)
+    0x95, 0x01,        //     Report Count (1)
+    0x91, 0x02,        //     Output (Data, Variable, Absolute)
+    0x09, 0xA7,        //     Usage (Start Delay)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //     Logical Maximum (255)
+    0x75, 0x08,        //     Report Size (8)
+    0x95, 0x01,        //     Report Count (1)
+    0x91, 0x02,        //     Output (Data, Variable, Absolute)
+    0x65, 0x00,        //     Unit (None)
+    0x55, 0x00,        //     Unit Exponent (0)
+    0x09, 0x7C,        //     Usage (Loop Count)
+    0x15, 0x00,        //     Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //     Logical Maximum (255)
+    0x75, 0x08,        //     Report Size (8)
+    0x95, 0x01,        //     Report Count (1)
+    0x91, 0x02,        //     Output (Data, Variable, Absolute)
+    0xC0,              //   End Collection
+
+    // === Report ID 0x04: Battery ===
+    0x05, 0x06,        //   Usage Page (Generic Device Controls)
+    0x09, 0x20,        //   Usage (Battery Strength)
+    0x85, 0x04,        //   Report ID (4)
+    0x15, 0x00,        //   Logical Minimum (0)
+    0x26, 0xFF, 0x00,  //   Logical Maximum (255)
+    0x75, 0x08,        //   Report Size (8)
+    0x95, 0x01,        //   Report Count (1)
     0x81, 0x02,        //   Input (Data, Variable, Absolute)
 
     0xC0,              // End Collection
@@ -89,116 +225,133 @@ pub const HID_INFO: [u8; 4] = [0x11, 0x01, 0x00, 0x03];
 /// Protocol Mode: Report Protocol (1) vs Boot Protocol (0)
 pub const PROTOCOL_MODE_REPORT: u8 = 1;
 
-/// HID Gamepad report (15 bytes of data, Xbox-compatible format).
+/// Xbox One S BLE gamepad report (Report ID 0x01, 16 bytes data).
 ///
-/// NOTE: Report ID is NOT included in the data when using BLE HID with
-/// Report Reference descriptor - the descriptor identifies the report.
+/// NOTE: Report ID is NOT included in the byte array — the Report Reference
+/// descriptor on the characteristic identifies this as Report ID 1.
 ///
-/// Layout MUST match HID_REPORT_DESCRIPTOR exactly:
-///   - 12 buttons + 4 padding (2 bytes)
-///   - Hat switch (1 byte: 4 bits value + 4 bits padding)
-///   - Left stick X/Y: 16-bit signed (4 bytes)
-///   - Right stick X/Y: 16-bit signed (4 bytes)
-///   - Triggers: 16-bit unsigned (4 bytes)
-#[derive(Clone, Copy, Default)]
+/// Byte layout matches real Xbox One S (Model 1708) exactly:
+///   Bytes 0-1:   Left Stick X   (uint16 LE, 0-65535, center=32768)
+///   Bytes 2-3:   Left Stick Y   (uint16 LE, 0-65535, center=32768)
+///   Bytes 4-5:   Right Stick X  (uint16 LE, 0-65535, center=32768)
+///   Bytes 6-7:   Right Stick Y  (uint16 LE, 0-65535, center=32768)
+///   Bytes 8-9:   Left Trigger   (10-bit LE in low bits, 6 padding in high bits)
+///   Bytes 10-11: Right Trigger  (10-bit LE in low bits, 6 padding in high bits)
+///   Byte 12:     Hat Switch     (4-bit in low nibble, 4 padding in high nibble)
+///   Bytes 13-14: Buttons 1-15   (15 bits, 1-bit padding)
+///   Byte 15:     AC Back        (1 bit, 7-bit padding)
+#[derive(Clone, Copy)]
 pub struct GamepadReport {
-    /// Button states - 12 buttons in lower 12 bits (bits 0-11)
-    /// Xbox layout: A,B,X,Y,LB,RB,Back,Start,L3,R3,Guide,unused
-    pub buttons: u16,
-    /// Hat switch / D-pad (0-7 for directions, 8 or 0x0F for neutral)
-    /// 0=N, 1=NE, 2=E, 3=SE, 4=S, 5=SW, 6=W, 7=NW, 8/15=neutral
-    pub hat: u8,
-    /// Left stick X (-32768=left, 0=center, 32767=right)
-    pub left_x: i16,
-    /// Left stick Y (-32768=up, 0=center, 32767=down)
-    pub left_y: i16,
-    // Right stick: always zero in to_bytes() - Dreamcast has no right stick
+    /// Left stick X (0=left, 32768=center, 65535=right)
+    pub left_x: u16,
+    /// Left stick Y (0=top, 32768=center, 65535=bottom)
+    pub left_y: u16,
     /// Left trigger (0=released, 1023=fully pressed)
     pub left_trigger: u16,
     /// Right trigger (0=released, 1023=fully pressed)
     pub right_trigger: u16,
+    /// Hat switch / D-pad (0=neutral, 1-8=directions)
+    pub hat: u8,
+    /// Button bitmask (bits 0-14 = buttons 1-15)
+    pub buttons: u16,
 }
 
-/// Hat switch values for D-pad directions (Xbox One convention: 1-8, 0=neutral).
+impl Default for GamepadReport {
+    fn default() -> Self {
+        Self {
+            left_x: 32768,
+            left_y: 32768,
+            left_trigger: 0,
+            right_trigger: 0,
+            hat: hat::NEUTRAL,
+            buttons: 0,
+        }
+    }
+}
+
+/// Hat switch values (Xbox One convention: 1-8, 0=neutral/null).
 pub mod hat {
-    pub const NEUTRAL: u8 = 0;     // No direction pressed
-    pub const NORTH: u8 = 1;       // Up
-    pub const NORTH_EAST: u8 = 2;  // Up + Right
-    pub const EAST: u8 = 3;        // Right
-    pub const SOUTH_EAST: u8 = 4;  // Down + Right
-    pub const SOUTH: u8 = 5;       // Down
-    pub const SOUTH_WEST: u8 = 6;  // Down + Left
-    pub const WEST: u8 = 7;        // Left
-    pub const NORTH_WEST: u8 = 8;  // Up + Left
+    pub const NEUTRAL: u8 = 0;
+    pub const NORTH: u8 = 1;
+    pub const NORTH_EAST: u8 = 2;
+    pub const EAST: u8 = 3;
+    pub const SOUTH_EAST: u8 = 4;
+    pub const SOUTH: u8 = 5;
+    pub const SOUTH_WEST: u8 = 6;
+    pub const WEST: u8 = 7;
+    pub const NORTH_WEST: u8 = 8;
 }
 
 impl GamepadReport {
     /// Create a new report with neutral/centered values.
     pub fn new() -> Self {
-        Self {
-            buttons: 0,
-            hat: hat::NEUTRAL,
-            left_x: 0,           // Center
-            left_y: 0,           // Center
-            left_trigger: 0,     // Released
-            right_trigger: 0,    // Released
-        }
+        Self::default()
     }
 
-    /// Convert to byte array for BLE transmission.
-    /// Layout: buttons(2), hat(1), left_stick(4), right_stick(4), triggers(4) = 15 bytes
-    /// All multi-byte values are little-endian.
-    /// NOTE: Report ID is NOT included - Report Reference descriptor identifies the report.
-    pub fn to_bytes(&self) -> [u8; 15] {
+    /// Convert to 16-byte array for BLE transmission.
+    ///
+    /// Trigger packing: 10 data bits in low bits of u16, 6 zero padding in high bits.
+    /// Byte 8 = trigger[7:0], Byte 9 = 000000 | trigger[9:8]
+    pub fn to_bytes(&self) -> [u8; 16] {
+        // Triggers: mask to 10 bits, stored as LE u16 (padding is in high 6 bits)
+        let lt = self.left_trigger & 0x03FF;
+        let rt = self.right_trigger & 0x03FF;
+
         [
-            // Buttons (2 bytes: 16 buttons including D-pad)
+            // Left Stick X (bytes 0-1, uint16 LE)
+            (self.left_x & 0xFF) as u8,
+            (self.left_x >> 8) as u8,
+            // Left Stick Y (bytes 2-3, uint16 LE)
+            (self.left_y & 0xFF) as u8,
+            (self.left_y >> 8) as u8,
+            // Right Stick X (bytes 4-5) - Dreamcast has no right stick, center=32768
+            0x00,
+            0x80,
+            // Right Stick Y (bytes 6-7)
+            0x00,
+            0x80,
+            // Left Trigger (bytes 8-9, 10-bit + 6 padding)
+            (lt & 0xFF) as u8,
+            (lt >> 8) as u8,
+            // Right Trigger (bytes 10-11, 10-bit + 6 padding)
+            (rt & 0xFF) as u8,
+            (rt >> 8) as u8,
+            // Hat Switch (byte 12, low nibble = value, high nibble = padding)
+            self.hat & 0x0F,
+            // Buttons 1-8 (byte 13)
             (self.buttons & 0xFF) as u8,
-            ((self.buttons >> 8) & 0xFF) as u8,
-            // Hat switch (1 byte: 4 bits value + 4 bits padding)
-            self.hat & 0x0F,  // Lower 4 bits = hat value, upper 4 bits = padding (0)
-            // Left stick X (2 bytes, little-endian)
-            (self.left_x as u16 & 0xFF) as u8,
-            ((self.left_x as u16 >> 8) & 0xFF) as u8,
-            // Left stick Y (2 bytes, little-endian)
-            (self.left_y as u16 & 0xFF) as u8,
-            ((self.left_y as u16 >> 8) & 0xFF) as u8,
-            // Right stick X/Y (4 bytes) - hardcoded to zero, Dreamcast has no right stick
-            0x00, 0x00, 0x00, 0x00,
-            // Left trigger (2 bytes, little-endian)
-            (self.left_trigger & 0xFF) as u8,
-            ((self.left_trigger >> 8) & 0xFF) as u8,
-            // Right trigger (2 bytes, little-endian)
-            (self.right_trigger & 0xFF) as u8,
-            ((self.right_trigger >> 8) & 0xFF) as u8,
+            // Buttons 9-15 + 1-bit padding (byte 14)
+            ((self.buttons >> 8) & 0x7F) as u8,
+            // AC Back (byte 15, bit 0) - unused, always 0
+            0x00,
         ]
     }
 }
 
-/// Button indices in the 16-bit button bitmask.
-/// Xbox-compatible layout for BlueRetro/receiver compatibility:
-/// - Bits 0-3: A, B, X, Y
-/// - Bits 4-5: LB, RB (bumpers)
-/// - Bit 6: Back/View
-/// - Bit 7: Start/Menu
-/// - Bits 8-9: L3, R3 (stick clicks)
-/// - Bit 10: Guide
-/// - Bits 11-14: D-pad (Up, Down, Left, Right)
+/// Button bit positions in the 15-bit button field.
+/// Xbox One S layout (matches HID Button Usage 1-15):
+///   Bit 0  = Button 1  = A
+///   Bit 1  = Button 2  = B
+///   Bit 2  = Button 3  = X
+///   Bit 3  = Button 4  = Y
+///   Bit 4  = Button 5  = LB (Left Bumper)
+///   Bit 5  = Button 6  = RB (Right Bumper)
+///   Bit 6  = Button 7  = Back/View
+///   Bit 7  = Button 8  = Menu/Start
+///   Bit 8  = Button 9  = Left Stick Click (L3)
+///   Bit 9  = Button 10 = Right Stick Click (R3)
+///   Bits 10-14 = reserved
 pub mod buttons {
     pub const A: u16 = 1 << 0;
     pub const B: u16 = 1 << 1;
     pub const X: u16 = 1 << 2;
     pub const Y: u16 = 1 << 3;
-    pub const LB: u16 = 1 << 4;      // Left bumper (unused on Dreamcast)
-    pub const RB: u16 = 1 << 5;      // Right bumper (unused on Dreamcast)
-    pub const BACK: u16 = 1 << 6;    // Back/View (unused on Dreamcast)
-    pub const START: u16 = 1 << 7;   // Start/Menu
-    pub const L3: u16 = 1 << 8;      // Left stick click (unused)
-    pub const R3: u16 = 1 << 9;      // Right stick click (unused)
-    pub const GUIDE: u16 = 1 << 10;  // Guide/Xbox button (unused)
-    pub const DPAD_UP: u16 = 1 << 11;
-    pub const DPAD_DOWN: u16 = 1 << 12;
-    pub const DPAD_LEFT: u16 = 1 << 13;
-    pub const DPAD_RIGHT: u16 = 1 << 14;
+    pub const LB: u16 = 1 << 4;
+    pub const RB: u16 = 1 << 5;
+    pub const BACK: u16 = 1 << 6;
+    pub const START: u16 = 1 << 7;
+    pub const L3: u16 = 1 << 8;
+    pub const R3: u16 = 1 << 9;
 }
 
 // GATT Service definitions using nrf-softdevice macros
@@ -214,10 +367,10 @@ pub struct HidService {
 
     /// Report Map (UUID 0x2A4B) - Read only, contains HID descriptor
     #[characteristic(uuid = "2A4B", read, security = "JustWorks")]
-    pub report_map: Vec<u8, 128>,
+    pub report_map: Vec<u8, 512>,
 
-    /// HID Report (UUID 0x2A4D) - Read, Notify (Input Report)
-    /// Report Reference descriptor (0x2908): [Report ID=1, Report Type=Input(0x01)]
+    /// HID Report - Input (UUID 0x2A4D), Report ID 1
+    /// Main gamepad state (16 bytes)
     #[characteristic(
         uuid = "2A4D",
         read,
@@ -225,15 +378,13 @@ pub struct HidService {
         security = "JustWorks",
         descriptor(uuid = "2908", security = "JustWorks", value = "[0x01, 0x01]")
     )]
-    pub report: [u8; 15],
+    pub report: [u8; 16],
 
     /// HID Control Point (UUID 0x2A4C) - Write without response
-    /// Used by host to signal suspend (0x00) or exit suspend (0x01)
     #[characteristic(uuid = "2A4C", write_without_response, security = "JustWorks")]
     pub control_point: u8,
 
     /// Protocol Mode (UUID 0x2A4E) - Read, Write Without Response
-    /// 0 = Boot Protocol, 1 = Report Protocol (default)
     #[characteristic(uuid = "2A4E", read, write_without_response, security = "JustWorks")]
     pub protocol_mode: u8,
 }
@@ -273,41 +424,36 @@ pub struct GamepadServer {
 impl GamepadServer {
     /// Initialize the server with default values.
     pub fn init(&self) -> Result<(), SetValueError> {
-        // Set HID Information
         self.hid.hid_info_set(&HID_INFO)?;
 
-        // Set Report Map (HID descriptor)
-        let mut report_map: Vec<u8, 128> = Vec::new();
+        let mut report_map: Vec<u8, 512> = Vec::new();
         report_map.extend_from_slice(HID_REPORT_DESCRIPTOR).ok();
         self.hid.report_map_set(&report_map)?;
 
-        // Set Protocol Mode to Report Protocol
         self.hid.protocol_mode_set(&PROTOCOL_MODE_REPORT)?;
 
-        // Set initial report (neutral state)
+        // Initial report: sticks centered (32768), everything else zero
         let initial_report = GamepadReport::new();
         self.hid.report_set(&initial_report.to_bytes())?;
 
-        // Set Device Information
+        // Device Information - match Xbox One S
         let mut manufacturer: Vec<u8, 32> = Vec::new();
-        manufacturer.extend_from_slice(b"Dreamcast").ok();
+        manufacturer.extend_from_slice(b"Microsoft").ok();
         self.device_info.manufacturer_set(&manufacturer)?;
 
         let mut model: Vec<u8, 32> = Vec::new();
-        model.extend_from_slice(b"Controller").ok();
+        model.extend_from_slice(b"Xbox Wireless Controller").ok();
         self.device_info.model_number_set(&model)?;
 
-        // PnP ID: Vendor ID Source, Vendor ID, Product ID, Version
-        // Xbox One S Controller over BLE: VID=0x045E (Microsoft), PID=0x02E0
+        // PnP ID: Xbox One S Controller over BLE
         let pnp_id: [u8; 7] = [
-            0x02,       // Vendor ID Source (0x02 = USB-IF)
-            0x5E, 0x04, // Vendor ID: 0x045E (Microsoft) - little endian
-            0xE0, 0x02, // Product ID: 0x02E0 (Xbox One S BLE) - little endian
+            0x02, // Vendor ID Source (USB-IF)
+            0x5E, 0x04, // Vendor ID: 0x045E (Microsoft)
+            0xE0, 0x02, // Product ID: 0x02E0 (Xbox One S BLE)
             0x00, 0x01, // Version 1.0
         ];
         self.device_info.pnp_id_set(&pnp_id)?;
 
-        // Set battery level to 100% (we don't actually measure this)
         self.battery.battery_level_set(&100)?;
 
         Ok(())

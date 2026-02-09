@@ -3,7 +3,7 @@
 
 use cortex_m_rt::entry;
 use nrf52840_dk_bsp::hal::{
-    gpio::{Level, p0::Parts as P0Parts},
+    gpio::{p0::Parts as P0Parts, Level},
     pac,
     prelude::*,
 };

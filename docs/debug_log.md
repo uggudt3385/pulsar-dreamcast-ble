@@ -6,6 +6,118 @@ Running log of tests, assumptions, and results for the Dreamcast controller adap
 
 ## Current State
 
+**Date:** 2026-02-09
+
+**Status:** Rewrote HID descriptor and report format to match real Xbox One S BLE controller exactly. Previous format had wrong field order, signed sticks (should be unsigned), wrong usages, and wrong report size. Ready for hardware test with iBlueControlMod.
+
+---
+
+## Session: 2026-02-09 (Xbox One S BLE Format Alignment)
+
+### Problem
+Hardware tester showed "insane" analog values — stick values going in and out "like a flower." Device didn't work with iBlueControlMod (Dreamcast Bluetooth adapter from Handheld Legend). Previous Sonnet session made uncommitted changes (Xbox rename, event-driven reporting) that were reverted.
+
+### Root Cause Analysis
+Researched the real Xbox One S BLE HID descriptor (Model 1708, PID 0x02E0) and compared to our implementation. Found **5 critical mismatches**:
+
+| Issue | Our Code (Before) | Real Xbox One S |
+|-------|-------------------|-----------------|
+| Stick range | **signed** -32768..32767 | **unsigned** 0..65535, center=32768 |
+| Field order | buttons, hat, sticks, triggers | **sticks, triggers, hat, buttons** |
+| Right stick usages | Rx (0x33) / Ry (0x34) | **Z (0x32) / Rz (0x35)** |
+| Trigger usages | Generic Desktop Z/Rz | **Sim Controls Brake (0xC5) / Accel (0xC4)** |
+| Trigger packing | 16-bit fields | **10-bit + 6 padding bits** |
+| Report size | 15 bytes | **16 bytes** |
+| Buttons | 16 | **15 + AC Back separate** |
+
+The "flower" behavior was caused by the signed/unsigned stick mismatch — our center value of 0 was interpreted as far-left (0 in unsigned range) instead of center (32768).
+
+The field order mismatch meant the receiver was parsing our button bytes as stick position data.
+
+### Research: iBlueControlMod
+- Product from Handheld Legend, ESP32-based
+- Explicitly **NOT** standard BlueRetro — "Upgrading to BlueRetro firmware will damage this product"
+- Different GPIO pinout from stock BlueRetro
+- Identifies controllers by name ("Xbox Wireless Controller") then HID descriptor fingerprinting
+- Supports Xbox One S, Xbox Series X|S, PS3/4/5, Switch Pro, etc.
+
+### Research: Xbox One S BLE Timing
+- Internal firmware runs at ~100Hz
+- BLE connection interval: 7-9 units (8.75-11.25ms)
+- Slave latency: 0 (never skip events)
+- Xbox controller has a bug where it doesn't advertise PPCP — hosts fall back to slow 30-50ms intervals
+- We set PPCP explicitly via `sd_ble_gap_conn_param_update()`
+- Fixed-rate continuous reporting, not event-driven
+
+### Changes Made
+
+#### `src/ble/hid.rs` — Complete HID rewrite
+- **Descriptor**: Full 334-byte Xbox One S descriptor with 4 Report IDs:
+  - ID 0x01: Main gamepad (16 bytes) — sticks, triggers, hat, buttons, AC Back
+  - ID 0x02: Xbox/Guide button (1 byte, AC Home usage)
+  - ID 0x03: Rumble output (9 bytes)
+  - ID 0x04: Battery (1 byte)
+- **Sticks**: Unsigned 0-65535 in Physical collections, X/Y and Z/Rz usages
+- **Triggers**: Simulation Controls page, Brake/Accelerator, 10-bit with explicit 6-bit const padding
+- **Buttons**: 15 buttons (Usage Min 1, Max 15) + 1-bit padding + AC Back (Consumer 0x0224) in own byte
+- **Report struct**: `GamepadReport` fields now `u16` for sticks (not `i16`)
+- **`to_bytes()`**: 16-byte output matching Xbox byte layout exactly
+  - Right stick hardcoded to `0x00, 0x80` (32768 = center, LE)
+  - Triggers masked to `& 0x03FF` before packing
+- **Report map Vec**: Capacity 128 → 512 to fit larger descriptor
+- **Device info**: Manufacturer "Microsoft", Model "Xbox Wireless Controller"
+- Removed D-pad button constants (DPAD_UP/DOWN/LEFT/RIGHT) — D-pad is hat-only now
+
+#### `src/maple/controller_state.rs` — Stick/trigger conversion
+- **Sticks**: `u8 * 257` → unsigned `u16` (maps 0→0, 128→32896≈32768, 255→65535)
+  - Deadzone outputs 32768 (center) instead of 0
+- **Triggers**: `val * 1023 / 255` for exact 8-bit to 10-bit scaling
+- Removed unused `to_ble_bytes()`
+
+#### `src/ble/softdevice.rs` — Identity & connection
+- Device name: "Xbox Wireless Controller" (was "Dreamcast Wireless Controller")
+- Scan data: Updated to match new name (26 bytes, was 31)
+- `event_length`: 6 (was 24) — allows shorter connection events for fast intervals
+- `attr_tab_size`: 2048 (was 1024) — more room for the larger GATT table
+
+#### `src/main.rs` — Connection parameters
+- After connection + security: requests conn interval 7-9 (8.75-11.25ms), slave latency 0, supervision timeout 4000ms via `sd_ble_gap_conn_param_update()`
+- Existing 8ms fixed-rate report loop unchanged (≈125Hz, matches Xbox)
+
+### Expected Behavior After Flash
+1. Device advertises as "Xbox Wireless Controller" with gamepad appearance
+2. iBlueControlMod should recognize it by name and/or descriptor fingerprint
+3. Sticks should report center=32768 at idle (not 0)
+4. Triggers should report 0 at idle, 1023 fully pressed
+5. Connection should negotiate ~10ms interval for ~100Hz report rate
+6. All 16 bytes of each report should be parseable by the receiver
+
+### Hardware Test Result (first flash)
+- Triggers showed up as "R STICK AXIS 2 / AXIS 3" on tester, not as triggers
+- Default position was -1.00000 (should be 0)
+- Root cause: Raw Xbox descriptor uses Z/Rz for right stick and Brake/Accelerator (Simulation Controls page) for triggers. Most HID parsers map Z/Rz to triggers instead, so our right stick data appeared as triggers and actual trigger data was unrecognized.
+
+### Fix Applied: xpadneo-patched Usage Convention
+Changed the HID descriptor to use the standard convention that the xpadneo Linux driver patches Xbox descriptors to:
+- **Right stick**: Z/Rz → **Rx (0x33) / Ry (0x34)** on Generic Desktop
+- **Triggers**: Sim Controls Brake/Accelerator → **Z (0x32) / Rz (0x35)** on Generic Desktop
+
+This is the universal gamepad convention (X/Y = left stick, Rx/Ry = right stick, Z/Rz = triggers).
+Byte layout unchanged — only the HID usage tags in the descriptor changed.
+
+### What To Watch For
+- Does iBlueControlMod pair and connect?
+- Are stick values sane on hardware tester? (should be ~32768 at center)
+- Do buttons register correctly? (A=bit0, B=bit1, X=bit2, Y=bit3)
+- Is D-pad working via hat switch?
+- Are triggers smooth 0-1023, showing 0 at idle?
+- Triggers should now appear as trigger axes, not right stick
+- Any disconnections or instability?
+
+---
+
+## Previous State
+
 **Date:** 2026-02-06
 
 **Status:** Full response now captured (937 bits, 7 inter-chunk gaps). Phase alignment remains the key issue - decoded bytes are wrong due to starting with B edge instead of A edge.
