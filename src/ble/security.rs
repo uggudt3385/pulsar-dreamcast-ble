@@ -18,7 +18,7 @@ struct Peer {
 }
 
 /// Simple bonder that stores one peer bond in RAM.
-/// In a real product, you'd store this in flash.
+/// Bond data is persisted to flash via `flash_bond` module on disconnect.
 pub struct Bonder {
     peer: Cell<Option<Peer>>,
     sys_attrs: RefCell<Vec<u8, 64>>,

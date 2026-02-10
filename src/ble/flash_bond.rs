@@ -67,7 +67,8 @@ impl StoredBond {
 /// Read bonding data from flash
 #[must_use]
 pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u8])> {
-    // Safety: reading from flash memory at a known valid address
+    // SAFETY: BOND_FLASH_ADDR is a valid, aligned flash address within the
+    // nRF52840 memory map. The StoredBond struct is repr(C, align(4)).
     let stored = unsafe { &*(BOND_FLASH_ADDR as *const StoredBond) };
 
     if !stored.is_valid() {
@@ -90,7 +91,8 @@ pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u
         bytes: stored.addr_bytes,
     };
 
-    // Reconstruct IdentityResolutionKey via transmute (repr(C) with just [u8;16])
+    // SAFETY: IdentityResolutionKey is repr(C) containing only [u8; 16].
+    // transmute enforces equal sizes at compile time.
     let irk: IdentityResolutionKey =
         unsafe { core::mem::transmute::<[u8; 16], IdentityResolutionKey>(stored.irk) };
 
@@ -99,6 +101,8 @@ pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u
     // Return sys_attrs slice
     let sys_attrs_len = usize::from(stored.sys_attrs_len);
     let sys_attrs = if sys_attrs_len > 0 && sys_attrs_len <= 64 {
+        // SAFETY: Length is bounds-checked above (1..=64). Pointer comes from
+        // a valid static flash reference with lifetime 'static.
         unsafe { core::slice::from_raw_parts(stored.sys_attrs.as_ptr(), sys_attrs_len) }
     } else {
         &[]
@@ -136,6 +140,7 @@ pub async fn save_bond(
         _pad2: 0,
         addr_bytes: peer_id.addr.bytes,
         _pad3: 0,
+        // SAFETY: IdentityResolutionKey is repr(C) containing only [u8; 16].
         irk: unsafe { core::mem::transmute::<IdentityResolutionKey, [u8; 16]>(peer_id.irk) },
         #[allow(clippy::cast_possible_truncation)]
         sys_attrs_len: sys_attrs.len().min(64) as u8,
@@ -151,7 +156,8 @@ pub async fn save_bond(
         .await
         .map_err(|_| ())?;
 
-    // Write the data
+    // SAFETY: StoredBond is repr(C, align(4)) with no padding invariants.
+    // Pointer is valid for the struct's size, and the slice doesn't outlive `stored`.
     let data = unsafe {
         core::slice::from_raw_parts(
             (&raw const stored).cast::<u8>(),
@@ -177,6 +183,7 @@ struct StoredNamePref {
 /// Defaults to false (Xbox name) if no preference is stored.
 #[must_use]
 pub fn load_name_preference() -> bool {
+    // SAFETY: NAME_FLASH_ADDR is a valid, aligned flash address. StoredNamePref is repr(C, align(4)).
     let stored = unsafe { &*(NAME_FLASH_ADDR as *const StoredNamePref) };
     if stored.magic != NAME_MAGIC {
         return false; // Default to Xbox
@@ -197,6 +204,7 @@ pub async fn save_name_preference(flash: &mut Flash, is_dreamcast: bool) -> Resu
         .await
         .map_err(|_| ())?;
 
+    // SAFETY: StoredNamePref is repr(C, align(4)). Pointer is valid for struct size.
     let data = unsafe {
         core::slice::from_raw_parts(
             (&raw const stored).cast::<u8>(),

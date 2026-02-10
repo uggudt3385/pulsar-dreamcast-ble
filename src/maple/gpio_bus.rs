@@ -14,8 +14,44 @@ use core::sync::atomic::{compiler_fence, Ordering};
 use embassy_nrf::gpio::{Flex, Pull};
 use heapless::Vec;
 
-/// Static buffer for bulk sampling (96KB). Pre-allocated to avoid runtime delay.
-static mut SAMPLE_BUFFER: [u32; 24576] = [0; 24576];
+/// Number of u32 samples in the bulk capture buffer.
+const SAMPLE_BUFFER_LEN: usize = 24576;
+
+/// NOP iterations for a ~500ns half-bit delay at 64MHz.
+const HALF_BIT_NOPS: u32 = 32;
+
+/// NOP iterations for pin stabilization after output mode set.
+const PIN_STABILIZE_NOPS: u32 = 100;
+
+/// NOP iterations for pull-up stabilization after input mode set.
+const PULLUP_STABILIZE_NOPS: u32 = 200;
+
+/// Minimum B-line transitions required to accept a valid start pattern.
+const MIN_START_TRANSITIONS: u32 = 3;
+
+/// Maximum busy-loop iterations waiting for start pattern completion.
+const START_PATTERN_TIMEOUT: u32 = 10_000;
+
+/// Number of start pattern B-line toggles.
+const START_TOGGLE_COUNT: u32 = 4;
+
+/// Minimum bits required to attempt packet decode.
+const MIN_DECODE_BITS: usize = 32;
+
+/// Minimum bytes required for a valid frame header.
+const MIN_FRAME_BYTES: usize = 4;
+
+/// Static buffer for bulk sampling (96KB, 37% of RAM). Pre-allocated to avoid runtime delay.
+///
+/// This size is intentional: the entire controller response must be captured in one
+/// uninterrupted burst at ~12.5MHz. On-the-fly processing would miss edges. The buffer
+/// includes headroom for the idle/wait period before the response starts.
+///
+/// # Safety
+/// Accessed only from `wait_and_sample()` and `receive_frame()`, which run
+/// sequentially on a single-core Cortex-M4 with interrupts disabled during
+/// the sampling window. No concurrent or overlapping references are possible.
+static mut SAMPLE_BUFFER: [u32; SAMPLE_BUFFER_LEN] = [0; SAMPLE_BUFFER_LEN];
 
 const PIN_A_MASK: u32 = 1 << crate::board::PIN_A_BIT;
 const PIN_B_MASK: u32 = 1 << crate::board::PIN_B_BIT;
@@ -35,7 +71,7 @@ fn read_p0_in() -> u32 {
 /// ~500ns delay at 64MHz
 #[inline]
 fn delay_half_bit() {
-    for _ in 0..32 {
+    for _ in 0..HALF_BIT_NOPS {
         cortex_m::asm::nop();
     }
     compiler_fence(Ordering::SeqCst);
@@ -63,7 +99,7 @@ impl MapleBus {
         sdckb.set_low();
 
         // Small delay for pins to stabilize
-        for _ in 0..100 {
+        for _ in 0..PIN_STABILIZE_NOPS {
             cortex_m::asm::nop();
         }
 
@@ -83,7 +119,7 @@ impl MapleBus {
         self.sdcka.set_as_input(Pull::Up);
         self.sdckb.set_as_input(Pull::Up);
         // Allow pull-ups to stabilize
-        for _ in 0..200 {
+        for _ in 0..PULLUP_STABILIZE_NOPS {
             cortex_m::asm::nop();
         }
     }
@@ -101,7 +137,7 @@ impl MapleBus {
         self.sdcka.set_low();
 
         // Toggle SDCKB 4 times
-        for _ in 0..4 {
+        for _ in 0..START_TOGGLE_COUNT {
             self.sdckb.set_high();
             delay_half_bit();
             self.sdckb.set_low();
@@ -226,6 +262,8 @@ impl MapleBus {
     pub fn wait_and_sample(&mut self, timeout_cycles: u32) -> (bool, u32, u32, usize) {
         self.set_input_mode();
 
+        // SAFETY: Single-core, interrupts disabled during sampling. Only one
+        // mutable reference exists at a time — no concurrent access possible.
         let samples = unsafe {
             core::ptr::addr_of_mut!(SAMPLE_BUFFER)
                 .as_mut()
@@ -275,18 +313,18 @@ impl MapleBus {
                 last_b = b;
             }
 
-            if a && b_transitions >= 3 {
+            if a && b_transitions >= MIN_START_TRANSITIONS {
                 // Valid start pattern - sample immediately
                 compiler_fence(Ordering::SeqCst);
                 for sample in samples.iter_mut() {
                     *sample = read_p0_in();
                 }
                 compiler_fence(Ordering::SeqCst);
-                return (true, wait_cycles, b_transitions, 24576);
+                return (true, wait_cycles, b_transitions, SAMPLE_BUFFER_LEN);
             }
 
             count += 1;
-            if count > 10000 {
+            if count > START_PATTERN_TIMEOUT {
                 return (false, wait_cycles, b_transitions, 0);
             }
         }
@@ -398,6 +436,8 @@ impl MapleBus {
             return None;
         }
 
+        // SAFETY: Single-core, interrupts disabled during sampling. The mutable
+        // reference from `wait_and_sample` has been dropped before this read.
         let samples = unsafe {
             core::ptr::addr_of!(SAMPLE_BUFFER)
                 .as_ref()
@@ -415,7 +455,7 @@ impl MapleBus {
         let (bits, _a_falls, _b_falls, _gaps) =
             self.decode_bulk_samples(samples, count, skip_samples);
 
-        if bits.len() < 32 {
+        if bits.len() < MIN_DECODE_BITS {
             // Not enough bits
             return None;
         }
@@ -431,7 +471,7 @@ impl MapleBus {
             bytes[byte_idx] = byte_val;
         }
 
-        if byte_count < 4 {
+        if byte_count < MIN_FRAME_BYTES {
             // Not enough bytes for frame
             return None;
         }

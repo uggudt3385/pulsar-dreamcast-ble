@@ -119,6 +119,11 @@ const WAKE_PIN_NUM: u32 = 2;
 
 /// Static storage for the boost converter control pin.
 /// Used during System Off entry to disable 5V output.
+///
+/// # Safety
+/// Written once in `init_pins()`, read only from `disable_boost()` during
+/// sleep entry. Both run on the main task of a single-core Cortex-M4 —
+/// no concurrent access possible.
 static mut BOOST_CONTROL: Option<Output<'static>> = None;
 
 /// Disable the 5V boost converter before entering System Off.
@@ -126,6 +131,7 @@ static mut BOOST_CONTROL: Option<Output<'static>> = None;
 /// # Safety
 /// Must only be called from the main task context, after `init_pins`.
 pub unsafe fn disable_boost() {
+    // SAFETY: See BOOST_CONTROL declaration — single writer, single reader, no concurrency.
     if let Some(ref mut boost) = BOOST_CONTROL {
         boost.set_low();
     }

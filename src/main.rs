@@ -9,7 +9,7 @@ use embassy_time::{Duration, Instant, Timer};
 use nrf_softdevice::ble::gatt_server;
 use nrf_softdevice::ble::security::SecurityHandler;
 use nrf_softdevice::Softdevice;
-use panic_halt as _;
+use panic_reset as _;
 use rtt_target::{rprintln, rtt_init_print};
 use static_cell::StaticCell;
 
@@ -23,6 +23,33 @@ use crate::ble::{
 };
 use crate::maple::host::MapleResult;
 use crate::maple::{ControllerState, MapleBus, MapleHost};
+
+/// Maple Bus polling interval (~60Hz).
+const POLL_INTERVAL_MS: u64 = 16;
+
+/// BLE HID notification interval (~125Hz, matches Xbox One S).
+const NOTIFY_INTERVAL_MS: u64 = 8;
+
+/// Consecutive poll failures before declaring controller lost.
+const CONTROLLER_LOST_THRESHOLD: u16 = 30;
+
+/// Initial retry delay for controller detection (ms).
+const INITIAL_RETRY_DELAY_MS: u64 = 100;
+
+/// Maximum retry delay for controller detection (ms).
+const MAX_RETRY_DELAY_MS: u64 = 1000;
+
+/// Delay for BLE client to discover services and subscribe (ms).
+const SERVICE_DISCOVERY_DELAY_MS: u64 = 5000;
+
+/// Max consecutive BLE notify failures before disconnecting.
+const MAX_NOTIFY_FAILURES: u8 = 10;
+
+/// Trigger change threshold for `state_changed` detection.
+const TRIGGER_CHANGE_THRESHOLD: i16 = 10;
+
+/// Stick change threshold for `state_changed` detection.
+const STICK_CHANGE_THRESHOLD: i16 = 15;
 
 /// Shared controller state between maple and BLE tasks.
 static CONTROLLER_STATE: Signal<CriticalSectionRawMutex, ControllerState> = Signal::new();
@@ -112,7 +139,7 @@ async fn main(spawner: Spawner) {
 
     // Detect controller (retry with backoff until found)
     status.show_searching();
-    let mut retry_delay_ms: u64 = 100;
+    let mut retry_delay_ms: u64 = INITIAL_RETRY_DELAY_MS;
     loop {
         status.tx_activity_on();
         let result = host.request_device_info(&mut bus);
@@ -125,8 +152,8 @@ async fn main(spawner: Spawner) {
         }
 
         Timer::after(Duration::from_millis(retry_delay_ms)).await;
-        // Back off up to 1 second between retries
-        retry_delay_ms = (retry_delay_ms * 2).min(1000);
+        // Back off up to max delay between retries
+        retry_delay_ms = (retry_delay_ms * 2).min(MAX_RETRY_DELAY_MS);
     }
 
     // Reserve wake pin for sleep (XIAO only, before entering the loop)
@@ -142,13 +169,15 @@ async fn main(spawner: Spawner) {
         if SLEEP_REQUEST.signaled() {
             SLEEP_REQUEST.wait().await;
             rprintln!("MAIN: Sleep requested, entering System Off");
+            // SAFETY: SoftDevice is initialized, wake pin is valid and unused.
+            // Called from main task context only.
             unsafe {
                 board::enter_system_off(wake_pin);
             }
         }
 
         if let MapleResult::Ok(state) = host.get_condition(&mut bus) {
-            if fail_count >= 30 {
+            if fail_count >= CONTROLLER_LOST_THRESHOLD {
                 rprintln!("MAPLE: Controller reconnected");
             }
             fail_count = 0;
@@ -165,14 +194,14 @@ async fn main(spawner: Spawner) {
             }
         } else {
             fail_count = fail_count.saturating_add(1);
-            if fail_count == 30 {
+            if fail_count == CONTROLLER_LOST_THRESHOLD {
                 rprintln!("MAPLE: Controller lost, sending neutral");
                 CONTROLLER_STATE.signal(ControllerState::default());
                 last_state = None;
             }
         }
 
-        Timer::after(Duration::from_millis(16)).await;
+        Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;
     }
 }
 
@@ -352,6 +381,8 @@ async fn handle_connection(
             slave_latency: 0,
             conn_sup_timeout: 400, // 4000ms
         };
+        // SAFETY: Connection handle is valid (checked above). conn_params is
+        // a well-formed struct on the stack, passed as a const pointer.
         let rc = unsafe {
             nrf_softdevice::raw::sd_ble_gap_conn_param_update(
                 handle,
@@ -369,7 +400,7 @@ async fn handle_connection(
     // Notification sender - sends HID reports at fixed interval (like real controllers)
     let notify_future = async {
         // Wait for client to discover services and subscribe
-        Timer::after(Duration::from_millis(5000)).await;
+        Timer::after(Duration::from_millis(SERVICE_DISCOVERY_DELAY_MS)).await;
 
         let mut current_state = ControllerState::default();
         let mut notify_fails: u8 = 0;
@@ -387,7 +418,7 @@ async fn handle_connection(
             let _ = server.hid.report_set(&report_bytes);
             if server.send_report(&conn, &report).is_err() {
                 notify_fails += 1;
-                if notify_fails > 10 {
+                if notify_fails > MAX_NOTIFY_FAILURES {
                     rprintln!("BLE: Too many notify failures, disconnecting");
                     break;
                 }
@@ -395,7 +426,7 @@ async fn handle_connection(
                 notify_fails = 0;
             }
 
-            Timer::after(Duration::from_millis(8)).await;
+            Timer::after(Duration::from_millis(NOTIFY_INTERVAL_MS)).await;
         }
     };
 
@@ -571,14 +602,14 @@ fn state_changed(prev: &ControllerState, curr: &ControllerState) -> bool {
         return true;
     }
 
-    if (i16::from(prev.trigger_l) - i16::from(curr.trigger_l)).abs() > 10
-        || (i16::from(prev.trigger_r) - i16::from(curr.trigger_r)).abs() > 10
+    if (i16::from(prev.trigger_l) - i16::from(curr.trigger_l)).abs() > TRIGGER_CHANGE_THRESHOLD
+        || (i16::from(prev.trigger_r) - i16::from(curr.trigger_r)).abs() > TRIGGER_CHANGE_THRESHOLD
     {
         return true;
     }
 
-    if (i16::from(prev.stick_x) - i16::from(curr.stick_x)).abs() > 15
-        || (i16::from(prev.stick_y) - i16::from(curr.stick_y)).abs() > 15
+    if (i16::from(prev.stick_x) - i16::from(curr.stick_x)).abs() > STICK_CHANGE_THRESHOLD
+        || (i16::from(prev.stick_y) - i16::from(curr.stick_y)).abs() > STICK_CHANGE_THRESHOLD
     {
         return true;
     }

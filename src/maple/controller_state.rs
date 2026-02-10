@@ -2,6 +2,8 @@
 //!
 //! Holds the parsed state from a `Get Condition` (`0x09`) response.
 
+use crate::maple::host::functions;
+
 /// Represents the state of a standard Dreamcast controller.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ControllerState {
@@ -129,6 +131,22 @@ impl ButtonState {
     }
 }
 
+/// Dreamcast analog stick center value (0-255 range).
+const DC_STICK_CENTER: u8 = 128;
+
+/// Xbox BLE stick center value (unsigned 16-bit, 0-65535 range).
+const XBOX_STICK_CENTER: u16 = 32768;
+
+/// Scale factor to convert Dreamcast stick (0-255) to Xbox stick (0-65535).
+/// Maps 0→0, 128→32896≈32768, 255→65535.
+const STICK_SCALE_FACTOR: u16 = 257;
+
+/// Maximum Xbox trigger value (10-bit).
+const XBOX_TRIGGER_MAX: u32 = 1023;
+
+/// Maximum Dreamcast trigger value (8-bit).
+const DC_TRIGGER_MAX: u32 = 255;
+
 impl ControllerState {
     /// Convert to Xbox One S BLE HID gamepad report.
     ///
@@ -184,23 +202,22 @@ impl ControllerState {
         const DEADZONE: u16 = 10;
         let raw_x = self.stick_y; // Dreamcast Y -> HID X
         let raw_y = self.stick_x; // Dreamcast X -> HID Y
-        let left_x: u16 = if (i16::from(raw_x) - 128).unsigned_abs() < DEADZONE {
-            32768
+        let left_x: u16 = if (i16::from(raw_x) - i16::from(DC_STICK_CENTER)).unsigned_abs() < DEADZONE {
+            XBOX_STICK_CENTER
         } else {
-            u16::from(raw_x) * 257
+            u16::from(raw_x) * STICK_SCALE_FACTOR
         };
-        let left_y: u16 = if (i16::from(raw_y) - 128).unsigned_abs() < DEADZONE {
-            32768
+        let left_y: u16 = if (i16::from(raw_y) - i16::from(DC_STICK_CENTER)).unsigned_abs() < DEADZONE {
+            XBOX_STICK_CENTER
         } else {
-            u16::from(raw_y) * 257
+            u16::from(raw_y) * STICK_SCALE_FACTOR
         };
 
         // Convert triggers: 0-255 -> 0-1023 (10-bit)
-        // Scale: multiply by ~4.012 -> use (val * 1023) / 255 for exact mapping
         #[allow(clippy::cast_possible_truncation)]
-        let left_trigger = (u32::from(self.trigger_l) * 1023 / 255) as u16;
+        let left_trigger = (u32::from(self.trigger_l) * XBOX_TRIGGER_MAX / DC_TRIGGER_MAX) as u16;
         #[allow(clippy::cast_possible_truncation)]
-        let right_trigger = (u32::from(self.trigger_r) * 1023 / 255) as u16;
+        let right_trigger = (u32::from(self.trigger_r) * XBOX_TRIGGER_MAX / DC_TRIGGER_MAX) as u16;
 
         GamepadReport {
             left_x,
@@ -226,9 +243,9 @@ impl ControllerState {
             return None;
         }
 
-        // Word 0: Function type - 0x00000001 = standard controller
+        // Word 0: Function type - must be standard controller
         let func_type = payload[0];
-        if func_type != 0x0000_0001 {
+        if func_type != functions::CONTROLLER {
             return None; // Not a standard controller
         }
 
@@ -269,8 +286,8 @@ impl ControllerState {
     #[must_use]
     #[allow(dead_code)] // Utility method for future use
     pub fn stick_centered(&self, deadzone: u8) -> bool {
-        let dx = (i16::from(self.stick_x) - 128).unsigned_abs();
-        let dy = (i16::from(self.stick_y) - 128).unsigned_abs();
+        let dx = (i16::from(self.stick_x) - i16::from(DC_STICK_CENTER)).unsigned_abs();
+        let dy = (i16::from(self.stick_y) - i16::from(DC_STICK_CENTER)).unsigned_abs();
         dx <= u16::from(deadzone) && dy <= u16::from(deadzone)
     }
 }

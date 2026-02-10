@@ -228,6 +228,12 @@ pub const HID_REPORT_DESCRIPTOR: &[u8] = &[
 /// bcdHID: 1.11, bCountryCode: 0, Flags: `RemoteWake` | `NormallyConnectable`
 pub const HID_INFO: [u8; 4] = [0x11, 0x01, 0x00, 0x03];
 
+/// 10-bit trigger mask.
+const TRIGGER_10BIT_MASK: u16 = 0x03FF;
+
+/// Right stick center as little-endian bytes (32768 = 0x8000).
+const RIGHT_STICK_CENTER_LE: [u8; 2] = [0x00, 0x80];
+
 /// Protocol Mode: Report Protocol (1) vs Boot Protocol (0)
 pub const PROTOCOL_MODE_REPORT: u8 = 1;
 
@@ -262,11 +268,14 @@ pub struct GamepadReport {
     pub buttons: u16,
 }
 
+/// Xbox BLE stick center value (unsigned 16-bit).
+const STICK_CENTER: u16 = 32768;
+
 impl Default for GamepadReport {
     fn default() -> Self {
         Self {
-            left_x: 32768,
-            left_y: 32768,
+            left_x: STICK_CENTER,
+            left_y: STICK_CENTER,
             left_trigger: 0,
             right_trigger: 0,
             hat: hat::NEUTRAL,
@@ -304,8 +313,8 @@ impl GamepadReport {
         let lx = self.left_x.to_le_bytes();
         let ly = self.left_y.to_le_bytes();
         // Triggers: mask to 10 bits, stored as LE u16 (padding is in high 6 bits)
-        let lt = (self.left_trigger & 0x03FF).to_le_bytes();
-        let rt = (self.right_trigger & 0x03FF).to_le_bytes();
+        let lt = (self.left_trigger & TRIGGER_10BIT_MASK).to_le_bytes();
+        let rt = (self.right_trigger & TRIGGER_10BIT_MASK).to_le_bytes();
 
         #[allow(clippy::cast_possible_truncation)]
         [
@@ -316,11 +325,11 @@ impl GamepadReport {
             ly[0],
             ly[1],
             // Right Stick X (bytes 4-5) - Dreamcast has no right stick, center=32768
-            0x00,
-            0x80,
+            RIGHT_STICK_CENTER_LE[0],
+            RIGHT_STICK_CENTER_LE[1],
             // Right Stick Y (bytes 6-7)
-            0x00,
-            0x80,
+            RIGHT_STICK_CENTER_LE[0],
+            RIGHT_STICK_CENTER_LE[1],
             // Left Trigger (bytes 8-9, 10-bit + 6 padding)
             lt[0],
             lt[1],
