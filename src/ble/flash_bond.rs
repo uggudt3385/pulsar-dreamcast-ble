@@ -2,15 +2,17 @@
 //!
 //! Stores BLE bonding data in the last flash page so it persists across power cycles.
 
+#![allow(clippy::missing_errors_doc)]
+
 use embedded_storage_async::nor_flash::NorFlash;
 use nrf_softdevice::ble::{Address, EncryptionInfo, IdentityKey, IdentityResolutionKey, MasterId};
 use nrf_softdevice::Flash;
 
 /// Flash address for bonding storage (last page before 1MB boundary)
-const BOND_FLASH_ADDR: u32 = 0x000FE000;
+const BOND_FLASH_ADDR: u32 = 0x000F_E000;
 
 /// Flash address for name preference storage (one page before bond data)
-const NAME_FLASH_ADDR: u32 = 0x000FD000;
+const NAME_FLASH_ADDR: u32 = 0x000F_D000;
 
 /// Flash page size
 const PAGE_SIZE: u32 = 4096;
@@ -46,24 +48,26 @@ pub struct StoredBond {
     _pad3: u16,
     /// IRK (16 bytes)
     irk: [u8; 16],
-    /// sys_attrs length
+    /// `sys_attrs` length
     sys_attrs_len: u8,
     /// Padding
     _pad4: [u8; 3],
-    /// sys_attrs data (64 bytes max)
+    /// `sys_attrs` data (64 bytes max)
     sys_attrs: [u8; 64],
 }
 
 impl StoredBond {
     /// Check if the stored data is valid
+    #[must_use]
     pub fn is_valid(&self) -> bool {
         self.magic == BOND_MAGIC
     }
 }
 
 /// Read bonding data from flash
+#[must_use]
 pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u8])> {
-    // Safety: reading from flash memory is safe
+    // Safety: reading from flash memory at a known valid address
     let stored = unsafe { &*(BOND_FLASH_ADDR as *const StoredBond) };
 
     if !stored.is_valid() {
@@ -93,7 +97,7 @@ pub fn load_bond() -> Option<(MasterId, EncryptionInfo, IdentityKey, &'static [u
     let peer_id = IdentityKey { irk, addr };
 
     // Return sys_attrs slice
-    let sys_attrs_len = stored.sys_attrs_len as usize;
+    let sys_attrs_len = usize::from(stored.sys_attrs_len);
     let sys_attrs = if sys_attrs_len > 0 && sys_attrs_len <= 64 {
         unsafe { core::slice::from_raw_parts(stored.sys_attrs.as_ptr(), sys_attrs_len) }
     } else {
@@ -133,6 +137,7 @@ pub async fn save_bond(
         addr_bytes: peer_id.addr.bytes,
         _pad3: 0,
         irk: unsafe { core::mem::transmute::<IdentityResolutionKey, [u8; 16]>(peer_id.irk) },
+        #[allow(clippy::cast_possible_truncation)]
         sys_attrs_len: sys_attrs.len().min(64) as u8,
         _pad4: [0u8; 3],
         sys_attrs: [0u8; 64],
@@ -149,7 +154,7 @@ pub async fn save_bond(
     // Write the data
     let data = unsafe {
         core::slice::from_raw_parts(
-            &stored as *const StoredBond as *const u8,
+            (&raw const stored).cast::<u8>(),
             core::mem::size_of::<StoredBond>(),
         )
     };
@@ -170,6 +175,7 @@ struct StoredNamePref {
 
 /// Load name preference from flash. Returns true if Dreamcast name is selected.
 /// Defaults to false (Xbox name) if no preference is stored.
+#[must_use]
 pub fn load_name_preference() -> bool {
     let stored = unsafe { &*(NAME_FLASH_ADDR as *const StoredNamePref) };
     if stored.magic != NAME_MAGIC {
@@ -193,7 +199,7 @@ pub async fn save_name_preference(flash: &mut Flash, is_dreamcast: bool) -> Resu
 
     let data = unsafe {
         core::slice::from_raw_parts(
-            &stored as *const StoredNamePref as *const u8,
+            (&raw const stored).cast::<u8>(),
             core::mem::size_of::<StoredNamePref>(),
         )
     };

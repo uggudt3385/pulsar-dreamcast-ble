@@ -3,8 +3,6 @@
 //! This module implements the host side of Maple Bus communication,
 //! allowing the adapter to query Dreamcast controllers.
 
-#![allow(dead_code)]
-
 use crate::maple::gpio_bus::MapleBus;
 use crate::maple::{ControllerState, MaplePacket};
 use heapless::Vec;
@@ -20,22 +18,12 @@ pub mod commands {
     pub const GET_CONDITION: u8 = 0x09;
     /// Condition response.
     pub const CONDITION_RESPONSE: u8 = 0x08;
-    /// No response / error.
-    pub const NO_RESPONSE: u8 = 0xFF;
 }
 
 /// Maple Bus function codes (device types).
 pub mod functions {
     /// Standard controller.
-    pub const CONTROLLER: u32 = 0x00000001;
-    /// Memory card (VMU).
-    pub const MEMORY_CARD: u32 = 0x00000002;
-    /// LCD display (VMU screen).
-    pub const LCD: u32 = 0x00000004;
-    /// Timer (VMU clock).
-    pub const TIMER: u32 = 0x00000008;
-    /// Vibration (rumble pack).
-    pub const VIBRATION: u32 = 0x00000100;
+    pub const CONTROLLER: u32 = 0x0000_0001;
 }
 
 /// Maple Bus addressing.
@@ -53,13 +41,12 @@ pub enum MapleResult<T> {
     Ok(T),
     /// No response (timeout).
     Timeout,
-    /// CRC error in response.
-    CrcError,
     /// Unexpected response command.
-    UnexpectedResponse(u8),
+    UnexpectedResponse(#[allow(dead_code)] u8),
 }
 
 /// Device information returned by Device Info Request.
+#[allow(dead_code)] // Fields populated but not yet consumed
 #[derive(Debug, Clone)]
 pub struct DeviceInfo {
     /// Function type bitmap.
@@ -103,15 +90,11 @@ pub struct MapleHost {
 
 impl MapleHost {
     /// Create a new Maple Host with default timeout.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             timeout_cycles: 64_000,
         }
-    }
-
-    /// Create a new Maple Host with custom timeout.
-    pub fn with_timeout(timeout_cycles: u32) -> Self {
-        Self { timeout_cycles }
     }
 
     /// Send a Device Info Request to discover what's connected.
@@ -129,23 +112,23 @@ impl MapleHost {
         // Read response using bulk sampling
         let response = bus.read_packet_bulk(self.timeout_cycles);
 
-        match response {
-            None => MapleResult::Timeout,
-            Some(pkt) => {
-                if pkt.command != commands::DEVICE_INFO_RESPONSE || pkt.payload.len() < 5 {
-                    MapleResult::UnexpectedResponse(pkt.command)
-                } else {
-                    let info = DeviceInfo {
-                        functions: pkt.payload[0],
-                        sub_functions: [pkt.payload[1], pkt.payload[2], pkt.payload[3]],
-                        region: (pkt.payload[4] >> 24) as u8,
-                        direction: (pkt.payload[4] >> 16) as u8,
-                        ..Default::default()
-                    };
-                    MapleResult::Ok(info)
-                }
-            }
+        let Some(pkt) = response else {
+            return MapleResult::Timeout;
+        };
+
+        if pkt.command != commands::DEVICE_INFO_RESPONSE || pkt.payload.len() < 5 {
+            return MapleResult::UnexpectedResponse(pkt.command);
         }
+
+        #[allow(clippy::cast_possible_truncation)]
+        let info = DeviceInfo {
+            functions: pkt.payload[0],
+            sub_functions: [pkt.payload[1], pkt.payload[2], pkt.payload[3]],
+            region: (pkt.payload[4] >> 24) as u8,
+            direction: (pkt.payload[4] >> 16) as u8,
+            ..Default::default()
+        };
+        MapleResult::Ok(info)
     }
 
     /// Send a Get Condition request to read controller state.
@@ -168,22 +151,18 @@ impl MapleHost {
 
             let response = bus.read_packet_bulk(self.timeout_cycles);
 
-            match response {
-                None => {
-                    // Retry on timeout/error
-                    continue;
-                }
-                Some(pkt) => {
-                    if pkt.command != commands::CONDITION_RESPONSE {
-                        return MapleResult::UnexpectedResponse(pkt.command);
-                    } else {
-                        match ControllerState::from_payload(&pkt.payload) {
-                            Some(state) => return MapleResult::Ok(state),
-                            None => return MapleResult::UnexpectedResponse(pkt.command),
-                        }
-                    }
-                }
+            let Some(pkt) = response else {
+                // Retry on timeout/error
+                continue;
+            };
+
+            if pkt.command != commands::CONDITION_RESPONSE {
+                return MapleResult::UnexpectedResponse(pkt.command);
             }
+            return match ControllerState::from_payload(&pkt.payload) {
+                Some(state) => MapleResult::Ok(state),
+                None => MapleResult::UnexpectedResponse(pkt.command),
+            };
         }
 
         MapleResult::Timeout

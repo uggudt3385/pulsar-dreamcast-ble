@@ -1,6 +1,12 @@
 //! HID over GATT (HOG) implementation for gamepad.
 //!
-//! Implements Xbox One S BLE HID format (Model 1708, PID 0x02E0).
+//! Implements Xbox One S BLE HID format (Model 1708, PID `0x02E0`).
+
+#![allow(clippy::redundant_else)] // Macro-generated code
+#![allow(clippy::missing_errors_doc)] // Internal API
+#![allow(clippy::trivially_copy_pass_by_ref)] // Macro-generated _set methods
+#![allow(clippy::unnecessary_semicolon)] // Macro-generated code
+#![allow(dead_code)] // Macro-generated event enum fields
 
 use heapless::Vec;
 use nrf_softdevice::ble::gatt_server::{NotifyValueError, SetValueError};
@@ -219,7 +225,7 @@ pub const HID_REPORT_DESCRIPTOR: &[u8] = &[
 ];
 
 /// HID Information characteristic value.
-/// bcdHID: 1.11, bCountryCode: 0, Flags: RemoteWake | NormallyConnectable
+/// bcdHID: 1.11, bCountryCode: 0, Flags: `RemoteWake` | `NormallyConnectable`
 pub const HID_INFO: [u8; 4] = [0x11, 0x01, 0x00, 0x03];
 
 /// Protocol Mode: Report Protocol (1) vs Boot Protocol (0)
@@ -284,26 +290,31 @@ pub mod hat {
 
 impl GamepadReport {
     /// Create a new report with neutral/centered values.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Convert to 16-byte array for BLE transmission.
     ///
-    /// Trigger packing: 10 data bits in low bits of u16, 6 zero padding in high bits.
-    /// Byte 8 = trigger[7:0], Byte 9 = 000000 | trigger[9:8]
-    pub fn to_bytes(&self) -> [u8; 16] {
+    /// Trigger packing: 10 data bits in low bits of `u16`, 6 zero padding in high bits.
+    /// Byte 8 = `trigger[7:0]`, Byte 9 = `000000 | trigger[9:8]`
+    #[must_use]
+    pub fn to_bytes(self) -> [u8; 16] {
+        let lx = self.left_x.to_le_bytes();
+        let ly = self.left_y.to_le_bytes();
         // Triggers: mask to 10 bits, stored as LE u16 (padding is in high 6 bits)
-        let lt = self.left_trigger & 0x03FF;
-        let rt = self.right_trigger & 0x03FF;
+        let lt = (self.left_trigger & 0x03FF).to_le_bytes();
+        let rt = (self.right_trigger & 0x03FF).to_le_bytes();
 
+        #[allow(clippy::cast_possible_truncation)]
         [
             // Left Stick X (bytes 0-1, uint16 LE)
-            (self.left_x & 0xFF) as u8,
-            (self.left_x >> 8) as u8,
+            lx[0],
+            lx[1],
             // Left Stick Y (bytes 2-3, uint16 LE)
-            (self.left_y & 0xFF) as u8,
-            (self.left_y >> 8) as u8,
+            ly[0],
+            ly[1],
             // Right Stick X (bytes 4-5) - Dreamcast has no right stick, center=32768
             0x00,
             0x80,
@@ -311,11 +322,11 @@ impl GamepadReport {
             0x00,
             0x80,
             // Left Trigger (bytes 8-9, 10-bit + 6 padding)
-            (lt & 0xFF) as u8,
-            (lt >> 8) as u8,
+            lt[0],
+            lt[1],
             // Right Trigger (bytes 10-11, 10-bit + 6 padding)
-            (rt & 0xFF) as u8,
-            (rt >> 8) as u8,
+            rt[0],
+            rt[1],
             // Hat Switch (byte 12, low nibble = value, high nibble = padding)
             self.hat & 0x0F,
             // Buttons 1-8 (byte 13)
@@ -341,6 +352,7 @@ impl GamepadReport {
 ///   Bit 8  = Button 9  = Left Stick Click (L3)
 ///   Bit 9  = Button 10 = Right Stick Click (R3)
 ///   Bits 10-14 = reserved
+#[allow(dead_code)] // Reference constants for Xbox button layout
 pub mod buttons {
     pub const A: u16 = 1 << 0;
     pub const B: u16 = 1 << 1;
@@ -357,7 +369,8 @@ pub mod buttons {
 // GATT Service definitions using nrf-softdevice macros
 
 /// HID Service (UUID 0x1812)
-/// Security: JustWorks (encrypted, unauthenticated) - required by HOGP spec
+/// Security: `JustWorks` (encrypted, unauthenticated) - required by HOGP spec
+#[allow(dead_code)] // Macro-generated fields
 #[nrf_softdevice::gatt_service(uuid = "1812")]
 pub struct HidService {
     /// HID Information (UUID 0x2A4A) - Read only
@@ -390,6 +403,7 @@ pub struct HidService {
 }
 
 /// Device Information Service (UUID 0x180A)
+#[allow(dead_code)] // Macro-generated fields
 #[nrf_softdevice::gatt_service(uuid = "180A")]
 pub struct DeviceInfoService {
     /// Manufacturer Name (UUID 0x2A29)
@@ -406,6 +420,7 @@ pub struct DeviceInfoService {
 }
 
 /// Battery Service (UUID 0x180F)
+#[allow(dead_code)] // Macro-generated fields
 #[nrf_softdevice::gatt_service(uuid = "180F")]
 pub struct BatteryService {
     /// Battery Level (UUID 0x2A19) - 0-100%
@@ -414,6 +429,7 @@ pub struct BatteryService {
 }
 
 /// Combined GATT server with all services.
+#[allow(dead_code)] // Macro-generated fields
 #[nrf_softdevice::gatt_server]
 pub struct GamepadServer {
     pub hid: HidService,
@@ -427,7 +443,7 @@ impl GamepadServer {
         self.hid.hid_info_set(&HID_INFO)?;
 
         let mut report_map: Vec<u8, 512> = Vec::new();
-        report_map.extend_from_slice(HID_REPORT_DESCRIPTOR).ok();
+        let _ = report_map.extend_from_slice(HID_REPORT_DESCRIPTOR).ok();
         self.hid.report_map_set(&report_map)?;
 
         self.hid.protocol_mode_set(&PROTOCOL_MODE_REPORT)?;
@@ -438,11 +454,11 @@ impl GamepadServer {
 
         // Device Information - match Xbox One S
         let mut manufacturer: Vec<u8, 32> = Vec::new();
-        manufacturer.extend_from_slice(b"Microsoft").ok();
+        let _ = manufacturer.extend_from_slice(b"Microsoft").ok();
         self.device_info.manufacturer_set(&manufacturer)?;
 
         let mut model: Vec<u8, 32> = Vec::new();
-        model.extend_from_slice(b"Xbox Wireless Controller").ok();
+        let _ = model.extend_from_slice(b"Xbox Wireless Controller").ok();
         self.device_info.model_number_set(&model)?;
 
         // PnP ID: Xbox One S Controller over BLE

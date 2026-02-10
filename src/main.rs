@@ -14,7 +14,6 @@ use rtt_target::{rprintln, rtt_init_print};
 use static_cell::StaticCell;
 
 mod ble;
-mod board;
 mod maple;
 
 use crate::ble::{
@@ -30,9 +29,10 @@ static CONTROLLER_STATE: Signal<CriticalSectionRawMutex, ControllerState> = Sign
 /// Signal to trigger sync/pairing mode (clears bonds).
 static SYNC_MODE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Signal to toggle device name and reset. Carries new is_dreamcast value.
+/// Signal to toggle device name and reset. Carries new `is_dreamcast` value.
 static NAME_TOGGLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 
+#[allow(clippy::items_after_statements)] // StaticCell pattern requires inline statics
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     rtt_init_print!();
@@ -57,11 +57,10 @@ async fn main(spawner: Spawner) {
     let sd = init_softdevice(is_dreamcast);
 
     // Create HID Gamepad GATT server
-    let server = match GamepadServer::new(sd) {
-        Ok(s) => s,
-        Err(_) => loop {
+    let Ok(server) = GamepadServer::new(sd) else {
+        loop {
             cortex_m::asm::wfi();
-        },
+        }
     };
     static SERVER: StaticCell<GamepadServer> = StaticCell::new();
     let server = SERVER.init(server);
@@ -116,17 +115,14 @@ async fn main(spawner: Spawner) {
     led2.set_low();
     let result = host.request_device_info(&mut bus);
 
-    let controller_detected = match &result {
-        MapleResult::Ok(_) => {
-            led2.set_high();
-            led3.set_low();
-            true
-        }
-        _ => {
-            led2.set_high();
-            led4.set_low();
-            false
-        }
+    let controller_detected = if let MapleResult::Ok(_) = &result {
+        led2.set_high();
+        led3.set_low();
+        true
+    } else {
+        led2.set_high();
+        led4.set_low();
+        false
     };
 
     if !controller_detected {
@@ -164,7 +160,7 @@ async fn main(spawner: Spawner) {
     }
 }
 
-/// SoftDevice runner task - must run continuously.
+/// `SoftDevice` runner task - must run continuously.
 #[embassy_executor::task]
 async fn softdevice_task(sd: &'static Softdevice) {
     sd.run().await;
@@ -173,10 +169,11 @@ async fn softdevice_task(sd: &'static Softdevice) {
 /// BLE advertising and connection handling task.
 ///
 /// State machine:
-/// - Reconnecting (60s): Try to connect to bonded device only
-/// - Idle: Continue trying bonded device (not discoverable)
-/// - SyncMode (60s): Discoverable to all, accepts new pairings
-/// - Connected: Active connection
+/// - `Reconnecting` (60s): Try to connect to bonded device only
+/// - `Idle`: Continue trying bonded device (not discoverable)
+/// - `SyncMode` (60s): Discoverable to all, accepts new pairings
+/// - `Connected`: Active connection
+#[allow(clippy::items_after_statements)]
 #[embassy_executor::task]
 async fn ble_task(
     sd: &'static Softdevice,
@@ -219,20 +216,17 @@ async fn ble_task(
 
                         match embassy_futures::select::select(adv_future, sync_future).await {
                             embassy_futures::select::Either::First(result) => {
-                                match result {
-                                    Ok(c) => break Some(c),
-                                    Err(_) => {
-                                        // Check timeout in Reconnecting state
-                                        if get_connection_state() == ConnectionState::Reconnecting
-                                            && start.elapsed().as_millis() >= RECONNECT_TIMEOUT_MS
-                                        {
-                                            rprintln!("BLE: Reconnect timeout, entering idle");
-                                            set_connection_state(ConnectionState::Idle);
-                                        }
-                                        Timer::after(Duration::from_millis(500)).await;
-                                        continue;
-                                    }
+                                if let Ok(c) = result {
+                                    break Some(c);
                                 }
+                                // Check timeout in Reconnecting state
+                                if get_connection_state() == ConnectionState::Reconnecting
+                                    && start.elapsed().as_millis() >= RECONNECT_TIMEOUT_MS
+                                {
+                                    rprintln!("BLE: Reconnect timeout, entering idle");
+                                    set_connection_state(ConnectionState::Idle);
+                                }
+                                Timer::after(Duration::from_millis(500)).await;
                             }
                             embassy_futures::select::Either::Second(()) => {
                                 // Sync mode triggered
@@ -281,13 +275,12 @@ async fn ble_task(
 
                     let adv_future = advertise(sd, server, bonder, AdvertiseMode::SyncMode);
 
-                    match embassy_time::with_timeout(Duration::from_secs(5), adv_future).await {
-                        Ok(Ok(c)) => break Some(c),
-                        Ok(Err(_)) | Err(_) => {
-                            // Timeout or error, keep trying
-                            continue;
-                        }
+                    if let Ok(Ok(c)) =
+                        embassy_time::with_timeout(Duration::from_secs(5), adv_future).await
+                    {
+                        break Some(c);
                     }
+                    // Timeout or error, keep trying
                 };
 
                 if let Some(conn) = conn {
@@ -329,7 +322,10 @@ async fn handle_connection(
             conn_sup_timeout: 400, // 4000ms
         };
         unsafe {
-            let _ = nrf_softdevice::raw::sd_ble_gap_conn_param_update(handle, &conn_params);
+            let _ = nrf_softdevice::raw::sd_ble_gap_conn_param_update(
+                handle,
+                (&raw const conn_params).cast_mut(),
+            );
         }
     }
 
@@ -382,10 +378,11 @@ async fn handle_connection(
 /// - Hold 3 seconds: enter pairing/sync mode
 /// - Triple-press within 2 seconds: toggle device name (Xbox <-> Dreamcast) and reset
 ///
-/// LED1 behavior based on ConnectionState:
-/// - Idle/Reconnecting: OFF
-/// - SyncMode: Fast blink (200ms on/off)
-/// - Connected: Solid ON
+/// LED1 behavior based on `ConnectionState`:
+/// - `Idle`/`Reconnecting`: OFF
+/// - `SyncMode`: Fast blink (200ms on/off)
+/// - `Connected`: Solid ON
+#[allow(clippy::items_after_statements)]
 #[embassy_executor::task]
 async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) {
     const HOLD_DURATION_MS: u64 = 3000;
@@ -524,14 +521,14 @@ fn state_changed(prev: &ControllerState, curr: &ControllerState) -> bool {
         return true;
     }
 
-    if (prev.trigger_l as i16 - curr.trigger_l as i16).abs() > 10
-        || (prev.trigger_r as i16 - curr.trigger_r as i16).abs() > 10
+    if (i16::from(prev.trigger_l) - i16::from(curr.trigger_l)).abs() > 10
+        || (i16::from(prev.trigger_r) - i16::from(curr.trigger_r)).abs() > 10
     {
         return true;
     }
 
-    if (prev.stick_x as i16 - curr.stick_x as i16).abs() > 15
-        || (prev.stick_y as i16 - curr.stick_y as i16).abs() > 15
+    if (i16::from(prev.stick_x) - i16::from(curr.stick_x)).abs() > 15
+        || (i16::from(prev.stick_y) - i16::from(curr.stick_y)).abs() > 15
     {
         return true;
     }

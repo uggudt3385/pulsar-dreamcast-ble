@@ -1,6 +1,6 @@
 //! Bluetooth Low Energy module for Dreamcast controller adapter.
 //!
-//! Uses nRF SoftDevice S140 for BLE peripheral functionality.
+//! Uses nRF `SoftDevice` S140 for BLE peripheral functionality.
 //! Implements HID over GATT (HOG) for standard gamepad support.
 
 pub mod flash_bond;

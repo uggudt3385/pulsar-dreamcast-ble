@@ -1,8 +1,6 @@
 //! Dreamcast controller state representation.
 //!
-//! Holds the parsed state from a Get Condition (0x09) response.
-
-#![allow(dead_code)] // Used by get_condition (upcoming feature)
+//! Holds the parsed state from a `Get Condition` (`0x09`) response.
 
 /// Represents the state of a standard Dreamcast controller.
 #[derive(Debug, Clone, Copy, Default)]
@@ -26,6 +24,8 @@ pub struct ControllerState {
 /// Digital button states from a Dreamcast controller.
 /// Note: In the Maple protocol, buttons are active LOW (0 = pressed).
 /// We invert them here so true = pressed for easier use.
+#[allow(clippy::struct_excessive_bools)]
+#[allow(dead_code)] // All buttons defined for completeness; not all used yet
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ButtonState {
     pub c: bool,
@@ -44,9 +44,10 @@ pub struct ButtonState {
 }
 
 impl ButtonState {
-    /// Parse button state from the first data word of a Get Condition response.
+    /// Parse button state from the first data word of a `Get Condition` response.
     /// The button bits are in the upper 16 bits of the first payload word.
     /// Buttons are active LOW in the protocol, so we invert.
+    #[must_use]
     pub fn from_raw(raw: u16) -> Self {
         Self {
             c: (raw & (1 << 0)) == 0,
@@ -65,6 +66,8 @@ impl ButtonState {
     }
 
     /// Returns true if any button is currently pressed.
+    #[must_use]
+    #[allow(dead_code)] // Utility method for future use
     pub fn any_pressed(&self) -> bool {
         self.c
             || self.b
@@ -80,9 +83,11 @@ impl ButtonState {
             || self.d
     }
 
-    /// Convert button state back to raw u16 format for BLE transmission.
+    /// Convert button state back to raw `u16` format for BLE transmission.
     /// Bit is set (1) when button is pressed (opposite of Maple protocol).
-    pub fn to_raw(&self) -> u16 {
+    #[must_use]
+    #[allow(dead_code)] // Utility method for future use
+    pub fn to_raw(self) -> u16 {
         let mut raw: u16 = 0;
         if self.c {
             raw |= 1 << 0;
@@ -128,12 +133,14 @@ impl ControllerState {
     /// Convert to Xbox One S BLE HID gamepad report.
     ///
     /// Mapping:
-    /// - Dreamcast A/B/X/Y → Xbox Buttons 1-4
-    /// - Dreamcast Start → Xbox Button 8 (Menu)
-    /// - Dreamcast D-pad → Hat switch (1-8, 0=neutral)
-    /// - Dreamcast analog stick → Left stick (uint16, 0-65535, center=32768)
-    /// - Dreamcast L/R triggers → Brake/Accelerator (10-bit, 0-1023)
-    pub fn to_gamepad_report(&self) -> crate::ble::hid::GamepadReport {
+    /// - Dreamcast A/B/X/Y -> Xbox Buttons 1-4
+    /// - Dreamcast Start -> Xbox Button 8 (Menu)
+    /// - Dreamcast D-pad -> Hat switch (1-8, 0=neutral)
+    /// - Dreamcast analog stick -> Left stick (uint16, 0-65535, center=32768)
+    /// - Dreamcast L/R triggers -> Brake/Accelerator (10-bit, 0-1023)
+    #[must_use]
+    #[allow(clippy::items_after_statements)]
+    pub fn to_gamepad_report(self) -> crate::ble::hid::GamepadReport {
         use crate::ble::hid::{buttons, hat, GamepadReport};
 
         let mut btns: u16 = 0;
@@ -174,24 +181,26 @@ impl ControllerState {
         // Convert Dreamcast stick (u8, 0-255, center=128) to Xbox (u16, 0-65535, center=32768)
         // Scale: multiply by 257 (maps 0→0, 128→32896≈32768, 255→65535)
         // Apply deadzone around center
-        const DEADZONE: u8 = 10;
-        let raw_x = self.stick_y; // Dreamcast Y → HID X
-        let raw_y = self.stick_x; // Dreamcast X → HID Y
-        let left_x: u16 = if (raw_x as i16 - 128).unsigned_abs() < DEADZONE as u16 {
+        const DEADZONE: u16 = 10;
+        let raw_x = self.stick_y; // Dreamcast Y -> HID X
+        let raw_y = self.stick_x; // Dreamcast X -> HID Y
+        let left_x: u16 = if (i16::from(raw_x) - 128).unsigned_abs() < DEADZONE {
             32768
         } else {
-            raw_x as u16 * 257
+            u16::from(raw_x) * 257
         };
-        let left_y: u16 = if (raw_y as i16 - 128).unsigned_abs() < DEADZONE as u16 {
+        let left_y: u16 = if (i16::from(raw_y) - 128).unsigned_abs() < DEADZONE {
             32768
         } else {
-            raw_y as u16 * 257
+            u16::from(raw_y) * 257
         };
 
-        // Convert triggers: 0-255 → 0-1023 (10-bit)
-        // Scale: multiply by ~4.012 → use (val * 1023) / 255 for exact mapping
-        let left_trigger = (self.trigger_l as u32 * 1023 / 255) as u16;
-        let right_trigger = (self.trigger_r as u32 * 1023 / 255) as u16;
+        // Convert triggers: 0-255 -> 0-1023 (10-bit)
+        // Scale: multiply by ~4.012 -> use (val * 1023) / 255 for exact mapping
+        #[allow(clippy::cast_possible_truncation)]
+        let left_trigger = (u32::from(self.trigger_l) * 1023 / 255) as u16;
+        #[allow(clippy::cast_possible_truncation)]
+        let right_trigger = (u32::from(self.trigger_r) * 1023 / 255) as u16;
 
         GamepadReport {
             left_x,
@@ -203,14 +212,15 @@ impl ControllerState {
         }
     }
 
-    /// Parse controller state from a Get Condition response payload.
+    /// Parse controller state from a `Get Condition` response payload.
     ///
-    /// Expected payload format (from command 0x09 response):
-    /// - Word 0: Function type (should be 0x00000001 for controller)
+    /// Expected payload format (from command `0x09` response):
+    /// - Word 0: Function type (should be `0x0000_0001` for controller)
     /// - Word 1: Buttons (upper 16 bits) + unused (lower 16 bits)
     /// - Word 2: Triggers (R in upper byte, L in next) + Stick X, Y
     ///
-    /// Returns None if payload is too short or function type is wrong.
+    /// Returns `None` if payload is too short or function type is wrong.
+    #[must_use]
     pub fn from_payload(payload: &[u32]) -> Option<Self> {
         if payload.len() < 3 {
             return None;
@@ -218,7 +228,7 @@ impl ControllerState {
 
         // Word 0: Function type - 0x00000001 = standard controller
         let func_type = payload[0];
-        if func_type != 0x00000001 {
+        if func_type != 0x0000_0001 {
             return None; // Not a standard controller
         }
 
@@ -226,10 +236,13 @@ impl ControllerState {
         // Assembled: trig_L | (trig_R << 8) | (btn_low << 16) | (btn_high << 24)
         // Raw values: 0x00 = released, 0xFF = fully pressed (no inversion needed)
         let word1 = payload[1];
+        #[allow(clippy::cast_possible_truncation)]
         let trigger_l = (word1 & 0xFF) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         let trigger_r = ((word1 >> 8) & 0xFF) as u8;
 
         // Buttons in upper 16 bits, bytes swapped
+        #[allow(clippy::cast_possible_truncation)]
         let buttons_word = ((word1 >> 16) & 0xFFFF) as u16;
         let buttons_raw = buttons_word.swap_bytes();
         let buttons = ButtonState::from_raw(buttons_raw);
@@ -238,7 +251,9 @@ impl ControllerState {
         // Format: [unused, unused, stick_x, stick_y] (main stick in upper 16 bits)
         // Bytes 0-1 are for secondary stick (stays 0x80 on standard controller)
         let analog_word = payload[2];
+        #[allow(clippy::cast_possible_truncation)]
         let stick_x = ((analog_word >> 16) & 0xFF) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         let stick_y = ((analog_word >> 24) & 0xFF) as u8;
 
         Some(Self {
@@ -251,10 +266,12 @@ impl ControllerState {
     }
 
     /// Check if the stick is roughly centered (within deadzone).
+    #[must_use]
+    #[allow(dead_code)] // Utility method for future use
     pub fn stick_centered(&self, deadzone: u8) -> bool {
-        let dx = (self.stick_x as i16 - 128).unsigned_abs() as u8;
-        let dy = (self.stick_y as i16 - 128).unsigned_abs() as u8;
-        dx <= deadzone && dy <= deadzone
+        let dx = (i16::from(self.stick_x) - 128).unsigned_abs();
+        let dy = (i16::from(self.stick_y) - 128).unsigned_abs();
+        dx <= u16::from(deadzone) && dy <= u16::from(deadzone)
     }
 }
 
@@ -291,9 +308,9 @@ mod tests {
         // Word 2: [stick_x, stick_y, ...]
         // For stick_x = 64, stick_y = 200: Word 2 = 64 | (200 << 8) | ... = 0x????C840
         let payload = [
-            0x00000001, // Function type: controller
-            0xFFFB9B37, // trig_L_raw=0x37, trig_R_raw=0x9B, buttons=A pressed
-            0x8080C840, // stick_x=64, stick_y=200, unused
+            0x0000_0001, // Function type: controller
+            0xFFFB_9B37, // trig_L_raw=0x37, trig_R_raw=0x9B, buttons=A pressed
+            0x8080_C840, // stick_x=64, stick_y=200, unused
         ];
 
         let state = ControllerState::from_payload(&payload).unwrap();

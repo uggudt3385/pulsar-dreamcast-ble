@@ -1,4 +1,4 @@
-//! SoftDevice initialization and BLE advertising.
+//! `SoftDevice` initialization and BLE advertising.
 
 use core::sync::atomic::{AtomicU8, Ordering};
 use nrf_softdevice::ble::{peripheral, Connection};
@@ -22,6 +22,7 @@ pub enum ConnectionState {
     Connected = 3,
 }
 
+#[allow(clippy::match_same_arms)]
 impl From<u8> for ConnectionState {
     fn from(v: u8) -> Self {
         match v {
@@ -52,7 +53,8 @@ static NAME_XBOX: &[u8] = b"Xbox Wireless Controller\0";
 /// Device name for Dreamcast branding (29 chars).
 static NAME_DREAMCAST: &[u8] = b"Dreamcast Wireless Controller\0";
 
-/// SoftDevice configuration for BLE peripheral mode.
+/// `SoftDevice` configuration for BLE peripheral mode.
+#[allow(clippy::cast_possible_truncation)] // SoftDevice FFI constants are small values
 fn softdevice_config(is_dreamcast: bool) -> nrf_softdevice::Config {
     let (name, name_len) = if is_dreamcast {
         (NAME_DREAMCAST.as_ptr(), 29u16)
@@ -83,7 +85,7 @@ fn softdevice_config(is_dreamcast: bool) -> nrf_softdevice::Config {
             _bitfield_1: raw::ble_gap_cfg_role_count_t::new_bitfield_1(0),
         }),
         gap_device_name: Some(raw::ble_gap_cfg_device_name_t {
-            p_value: name as _,
+            p_value: name.cast_mut(),
             current_len: name_len,
             max_len: name_len,
             write_perm: raw::ble_gap_conn_sec_mode_t {
@@ -97,13 +99,14 @@ fn softdevice_config(is_dreamcast: bool) -> nrf_softdevice::Config {
     }
 }
 
-/// Initialize the SoftDevice and return a mutable reference to it.
+/// Initialize the `SoftDevice` and return a mutable reference to it.
 ///
 /// `is_dreamcast`: if true, advertises as "Dreamcast Wireless Controller";
 /// otherwise "Xbox Wireless Controller" (compatible with iBlueControlMod).
 ///
 /// # Safety
 /// This must be called exactly once at program start, before any BLE operations.
+#[must_use]
 pub fn init_softdevice(is_dreamcast: bool) -> &'static mut Softdevice {
     let config = softdevice_config(is_dreamcast);
     Softdevice::enable(&config)
@@ -194,8 +197,11 @@ pub enum AdvertiseMode {
 
 /// Start BLE advertising based on mode.
 ///
-/// - SyncMode: General Discoverable, visible in Bluetooth menus, accepts any pairing
-/// - Reconnect: Not discoverable (won't appear in Bluetooth scans), but bonded device can reconnect
+/// - `SyncMode`: General Discoverable, visible in Bluetooth menus, accepts any pairing
+/// - `Reconnect`: Not discoverable (won't appear in Bluetooth scans), but bonded device can reconnect
+///
+/// # Errors
+/// Returns `peripheral::AdvertiseError` if advertising fails.
 pub async fn advertise(
     sd: &'static Softdevice,
     _server: &GamepadServer,

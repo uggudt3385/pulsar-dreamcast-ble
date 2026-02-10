@@ -908,3 +908,34 @@ The iBlueControlMod adapter identifies controllers by BLE name ("Xbox Wireless C
 2. Triple-press sync button → 5 rapid blinks → device resets → advertises with other name
 3. Preference persists across power cycles
 4. 3-second hold for sync mode still works unchanged
+
+---
+
+## 2026-02-09: Clean up all clippy pedantic warnings and dead code
+
+### What Changed
+Comprehensive cleanup to achieve zero warnings under `cargo clippy -- -W clippy::all -W clippy::pedantic`.
+
+### Deleted
+- **`src/board/mod.rs`** — entire module removed (unused `LedState`, `BoardConfig`, `Nrf52840Dk`, pin constants). Removed `mod board` from `main.rs` and `lib.rs`.
+- **`src/maple/packet.rs`** — deleted unused `encode()`, `decode()`, `crc()`, `crc8_word()`, `Default` impl.
+- **`src/maple/host.rs`** — deleted unused `commands::NO_RESPONSE`, `functions::{MEMORY_CARD, LCD, TIMER, VIBRATION}`, `MapleHost::with_timeout()`, `MapleResult::CrcError`.
+- **`src/maple/gpio_bus.rs`** — deleted unused `MapleBusGpioOut` type alias.
+
+### Fixed across all files
+- Hex literal separators: `0x000FE000` → `0x000F_E000`, `0x00000001` → `0x0000_0001`, etc.
+- Cast warnings: `as u8/u16/u32` → `u8::from()`, `u16::from()`, `u32::from_le_bytes()`, `.to_le_bytes()`
+- `&x as *const T` → `&raw const x` / `.cast_mut()` for pointer casts
+- `#[inline(always)]` → `#[inline]` on all gpio_bus functions
+- `map().unwrap_or()` → `map_or()`, `.is_some_and()` in security.rs
+- `to_*` methods on Copy types: `&self` → `self`
+- Doc backtick warnings: bare identifiers in doc comments wrapped in backticks
+- `let...else` and `if let` patterns replacing match-on-single-pattern
+- Removed redundant `continue` and `else` blocks
+- Added `#[must_use]` on all pure public functions
+- Module-level `#[allow]` for unavoidable macro-generated warnings (nrf-softdevice gatt macros)
+
+### Verification
+- `cargo clippy -- -W clippy::all -W clippy::pedantic` — 0 warnings
+- `cargo build` — success
+- `cargo fmt` — clean

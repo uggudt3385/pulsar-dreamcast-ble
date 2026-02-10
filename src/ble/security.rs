@@ -9,6 +9,7 @@ use nrf_softdevice::ble::security::{IoCapabilities, SecurityHandler};
 use nrf_softdevice::ble::{Connection, EncryptionInfo, IdentityKey, MasterId};
 
 /// Stored bond information for a peer.
+#[allow(clippy::struct_field_names)]
 #[derive(Debug, Clone, Copy)]
 struct Peer {
     master_id: MasterId,
@@ -25,6 +26,7 @@ pub struct Bonder {
 }
 
 impl Bonder {
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             peer: Cell::new(None),
@@ -57,7 +59,7 @@ impl Bonder {
         self.peer.get().map(|p| (p.master_id, p.key, p.peer_id))
     }
 
-    /// Get current sys_attrs for saving
+    /// Get current `sys_attrs` for saving
     pub fn get_sys_attrs(&self) -> heapless::Vec<u8, 64> {
         let attrs = self.sys_attrs.borrow();
         let len = self.sys_attrs_len.get();
@@ -87,6 +89,7 @@ impl Default for Bonder {
     }
 }
 
+#[allow(clippy::unused_self)] // Trait requires &self on all methods
 impl SecurityHandler for Bonder {
     fn io_capabilities(&self) -> IoCapabilities {
         // No input/output - use "Just Works" pairing
@@ -146,8 +149,7 @@ impl SecurityHandler for Bonder {
         let is_bonded_peer = self
             .peer
             .get()
-            .map(|peer| peer.peer_id.is_match(addr))
-            .unwrap_or(false);
+            .is_some_and(|peer| peer.peer_id.is_match(addr));
 
         let attrs_slice = if is_bonded_peer && saved_len > 0 {
             Some(&attrs.as_slice()[..saved_len])

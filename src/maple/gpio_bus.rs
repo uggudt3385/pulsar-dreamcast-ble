@@ -9,8 +9,6 @@
 //! - 500ns per phase = 2Mbps
 //! - Idle state: SDCKA HIGH, SDCKB LOW
 
-#![allow(dead_code)] // Some methods for real-time edge detection (alternative to bulk sampling)
-
 use crate::maple::MaplePacket;
 use core::sync::atomic::{compiler_fence, Ordering};
 use embassy_nrf::gpio::{Flex, Pull};
@@ -28,13 +26,14 @@ const P0_BASE: u32 = 0x5000_0000;
 const GPIO_IN_OFFSET: u32 = 0x510;
 
 /// Read P0 IN register directly.
-#[inline(always)]
+#[inline]
 fn read_p0_in() -> u32 {
+    // MMIO register access requires integer-to-pointer cast
     unsafe { core::ptr::read_volatile((P0_BASE + GPIO_IN_OFFSET) as *const u32) }
 }
 
 /// ~500ns delay at 64MHz
-#[inline(always)]
+#[inline]
 fn delay_half_bit() {
     for _ in 0..32 {
         cortex_m::asm::nop();
@@ -54,6 +53,8 @@ impl MapleBus {
     /// Create a new Maple Bus GPIO driver.
     ///
     /// Initializes pins in idle state (SDCKA high, SDCKB low).
+    #[must_use]
+    #[allow(clippy::similar_names)] // sdcka/sdckb are protocol names
     pub fn new(mut sdcka: Flex<'static>, mut sdckb: Flex<'static>) -> Self {
         // Start in output mode with idle state
         sdcka.set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
@@ -88,7 +89,7 @@ impl MapleBus {
     }
 
     /// Set bus to idle state (SDCKA high, SDCKB low).
-    #[inline(always)]
+    #[inline]
     pub fn set_idle(&mut self) {
         self.sdcka.set_high();
         self.sdckb.set_low();
@@ -144,7 +145,7 @@ impl MapleBus {
     }
 
     /// Write a single bit using the alternating clock/data scheme.
-    #[inline(always)]
+    #[inline]
     pub fn write_bit(&mut self, bit: bool, phase: &mut bool) {
         if *phase {
             // Phase true: SDCKA = clock, SDCKB = data
@@ -173,7 +174,7 @@ impl MapleBus {
     }
 
     /// Write a byte, MSB first.
-    #[inline(always)]
+    #[inline]
     pub fn write_byte(&mut self, byte: u8, phase: &mut bool) {
         for i in (0..8).rev() {
             let bit = (byte >> i) & 1 == 1;
@@ -183,10 +184,10 @@ impl MapleBus {
 
     /// Write a 32-bit word in Maple Bus byte order (LSB first).
     pub fn write_word(&mut self, word: u32, phase: &mut bool) {
-        self.write_byte(word as u8, phase);
-        self.write_byte((word >> 8) as u8, phase);
-        self.write_byte((word >> 16) as u8, phase);
-        self.write_byte((word >> 24) as u8, phase);
+        let bytes = word.to_le_bytes();
+        for &b in &bytes {
+            self.write_byte(b, phase);
+        }
     }
 
     /// Write a complete packet.
@@ -204,7 +205,7 @@ impl MapleBus {
         self.write_word(frame, &mut phase);
         Self::update_crc(frame, &mut crc);
 
-        for &word in packet.payload.iter() {
+        for &word in &packet.payload {
             self.write_word(word, &mut phase);
             Self::update_crc(word, &mut crc);
         }
@@ -215,14 +216,13 @@ impl MapleBus {
 
     /// Update CRC with a word (bytewise XOR).
     fn update_crc(word: u32, crc: &mut u8) {
-        *crc ^= (word & 0xFF) as u8;
-        *crc ^= ((word >> 8) & 0xFF) as u8;
-        *crc ^= ((word >> 16) & 0xFF) as u8;
-        *crc ^= ((word >> 24) & 0xFF) as u8;
+        for &b in &word.to_le_bytes() {
+            *crc ^= b;
+        }
     }
 
     /// Wait for start pattern and bulk sample.
-    /// Returns (success, wait_cycles, b_transitions, sample_count).
+    /// Returns `(success, wait_cycles, b_transitions, sample_count)`.
     pub fn wait_and_sample(&mut self, timeout_cycles: u32) -> (bool, u32, u32, usize) {
         self.set_input_mode();
 
@@ -293,6 +293,8 @@ impl MapleBus {
     }
 
     /// Decode bits from bulk samples.
+    #[must_use]
+    #[allow(clippy::unused_self)] // Method on bus for API consistency
     pub fn decode_bulk_samples(
         &self,
         samples: &[u32],
@@ -335,13 +337,13 @@ impl MapleBus {
             // A falls -> sample B (Phase 1)
             if last_a && !a {
                 seen_first_a_fall = true;
-                let _ = bits.push(b as u8);
+                let _ = bits.push(u8::from(b));
                 a_falls += 1;
             }
             // B falls -> sample A (Phase 2), but only after first A fall
             else if last_b && !b {
                 if seen_first_a_fall {
-                    let _ = bits.push(a as u8);
+                    let _ = bits.push(u8::from(a));
                 }
                 b_falls += 1;
             }
@@ -354,6 +356,8 @@ impl MapleBus {
     }
 
     /// Find first N edges and their sample indices.
+    #[must_use]
+    #[allow(clippy::unused_self)] // Method on bus for API consistency
     pub fn find_first_edges(
         &self,
         samples: &[u32],
@@ -387,7 +391,7 @@ impl MapleBus {
 
     /// Read a complete response packet using bulk sampling.
     pub fn read_packet_bulk(&mut self, timeout_cycles: u32) -> Option<MaplePacket> {
-        let (success, _wait_cycles, b_trans, count) = self.wait_and_sample(timeout_cycles);
+        let (success, _wait_cycles, _b_trans, count) = self.wait_and_sample(timeout_cycles);
 
         if !success {
             // No start pattern detected
@@ -401,7 +405,7 @@ impl MapleBus {
         };
 
         let edges = self.find_first_edges(samples, count, 40);
-        let first_edge_idx = edges.first().map(|(idx, _, _)| *idx).unwrap_or(0);
+        let first_edge_idx = edges.first().map_or(0, |(idx, _, _)| *idx);
         let skip_samples = if first_edge_idx > 100 {
             first_edge_idx.saturating_sub(10)
         } else {
@@ -433,13 +437,13 @@ impl MapleBus {
         }
 
         // Parse frame word (LSB byte first)
-        let frame = (bytes[0] as u32)
-            | ((bytes[1] as u32) << 8)
-            | ((bytes[2] as u32) << 16)
-            | ((bytes[3] as u32) << 24);
+        let frame = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
 
+        #[allow(clippy::cast_possible_truncation)]
         let command = ((frame >> 24) & 0xFF) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         let recipient = ((frame >> 16) & 0xFF) as u8;
+        #[allow(clippy::cast_possible_truncation)]
         let sender = ((frame >> 8) & 0xFF) as u8;
         let length = (frame & 0xFF) as usize;
 
@@ -454,10 +458,12 @@ impl MapleBus {
         let mut payload: Vec<u32, 255> = Vec::new();
         for i in 0..length {
             let offset = 4 + (i * 4);
-            let word = (bytes[offset] as u32)
-                | ((bytes[offset + 1] as u32) << 8)
-                | ((bytes[offset + 2] as u32) << 16)
-                | ((bytes[offset + 3] as u32) << 24);
+            let word = u32::from_le_bytes([
+                bytes[offset],
+                bytes[offset + 1],
+                bytes[offset + 2],
+                bytes[offset + 3],
+            ]);
             payload.push(word).ok()?;
             crc ^= bytes[offset] ^ bytes[offset + 1] ^ bytes[offset + 2] ^ bytes[offset + 3];
         }
@@ -476,6 +482,3 @@ impl MapleBus {
         })
     }
 }
-
-// Type alias for backwards compatibility
-pub type MapleBusGpioOut = MapleBus;
