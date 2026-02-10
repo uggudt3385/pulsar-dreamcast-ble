@@ -6,9 +6,85 @@ Running log of tests, assumptions, and results for the Dreamcast controller adap
 
 ## Current State
 
-**Date:** 2026-02-09
+**Date:** 2026-02-10
 
-**Status:** Rewrote HID descriptor and report format to match real Xbox One S BLE controller exactly. Previous format had wrong field order, signed sticks (should be unsigned), wrong usages, and wrong report size. Ready for hardware test with iBlueControlMod.
+**Status:** Added XIAO nRF52840 board support alongside existing DK. Both boards compile cleanly. DK build unchanged (default). XIAO adds RGB LED, 5V boost control, and auto-sleep after BLE disconnect timeout.
+
+---
+
+## Session: 2026-02-10 (XIAO Board Support + Power Management)
+
+### What Changed
+Added a board abstraction layer so the same firmware supports both the nRF52840-DK (development) and XIAO nRF52840 (production VMU shell) via Cargo feature flags.
+
+### Architecture
+- **Feature flags:** `board-dk` (default) and `board-xiao` in `Cargo.toml`
+- **Board module:** `src/board/mod.rs` conditionally includes `dk.rs` or `xiao.rs`
+- Each board exports: `init_pins()`, `StatusLeds`, `PIN_A_BIT`/`PIN_B_BIT` constants
+- `gpio_bus.rs` pin masks now derived from `board::PIN_A_BIT`/`PIN_B_BIT`
+
+### Pin Mappings
+
+**DK** (unchanged):
+| Function | Pin | Notes |
+|----------|-----|-------|
+| SDCKA | P0.05 | Maple bus line A |
+| SDCKB | P0.06 | Maple bus line B |
+| LED1 (sync) | P0.13 | Active LOW |
+| LED2-4 (status) | P0.14-16 | Active LOW |
+| Sync button | P0.25 | Active LOW, pull-up |
+
+**XIAO**:
+| Function | Pin | Header | Notes |
+|----------|-----|--------|-------|
+| SDCKA | P0.05 | D5 | Same as DK |
+| SDCKB | P0.04 | D4 | Remapped (P0.06 = XIAO blue LED) |
+| RGB LED R | P0.26 | internal | Active LOW |
+| RGB LED G | P0.30 | internal | Active LOW |
+| RGB LED B | P0.06 | internal | Used as sync LED |
+| Sync button | P0.29 | D3 | VMU MODE button |
+| Wake button | P0.02 | D0 | VMU SLEEP button, GPIO SENSE wake |
+| Boost SHDN | P0.28 | D2 | Pololu enable (HIGH=on) |
+
+### XIAO LED Status
+- Searching: Red solid
+- Controller found: Green solid
+- Sync mode: Blue fast blink (via sync button task)
+- TX activity: no-op (avoid flicker on single RGB LED)
+
+### XIAO Power Management
+- **Auto-sleep:** After BLE disconnect, reconnect timeout (60s) triggers System Off
+- **System Off entry:** Disables 5V boost (SHDN LOW), configures P0.02 SENSE LOW, calls `sd_power_system_off()`
+- **Wake:** Press VMU SLEEP button → GPIO SENSE triggers full reset → boots fresh, reconnects via bond
+- **Expected draw:** ~5µA in System Off
+
+### Files Created
+- `src/board/mod.rs` — Board abstraction module root
+- `src/board/dk.rs` — DK pin mappings, 4 LEDs, no sleep
+- `src/board/xiao.rs` — XIAO pin mappings, RGB LED, boost control, sleep
+
+### Files Modified
+- `Cargo.toml` — Added `board-dk`/`board-xiao` features
+- `src/lib.rs` — Added `pub mod board`
+- `src/main.rs` — Uses `board::init_pins()` + `StatusLeds` methods, XIAO sleep signal
+- `src/maple/gpio_bus.rs` — Pin masks use `board::PIN_A_BIT`/`PIN_B_BIT`
+
+### Build Commands
+```sh
+cargo build                                              # DK (default)
+cargo build --features board-xiao --no-default-features  # XIAO
+```
+
+### Verification
+- `cargo build` — DK clean ✓
+- `cargo build --features board-xiao --no-default-features` — XIAO clean ✓
+- `cargo clippy -- -W clippy::all -W clippy::pedantic` — 0 warnings (both) ✓
+- `cargo fmt --check` — clean ✓
+
+### What's Next
+1. Flash DK — verify existing functionality unchanged
+2. When XIAO arrives: flash, verify Maple bus, BLE, sleep/wake, boost control
+3. Battery ADC reading (P0.31 via P0.14 enable) — future
 
 ---
 

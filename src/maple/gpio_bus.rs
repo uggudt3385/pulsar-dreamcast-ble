@@ -17,8 +17,8 @@ use heapless::Vec;
 /// Static buffer for bulk sampling (96KB). Pre-allocated to avoid runtime delay.
 static mut SAMPLE_BUFFER: [u32; 24576] = [0; 24576];
 
-const PIN_A_MASK: u32 = 1 << 5; // SDCKA on P0.05
-const PIN_B_MASK: u32 = 1 << 6; // SDCKB on P0.06
+const PIN_A_MASK: u32 = 1 << crate::board::PIN_A_BIT;
+const PIN_B_MASK: u32 = 1 << crate::board::PIN_B_BIT;
 
 /// P0 GPIO base address for direct register access.
 const P0_BASE: u32 = 0x5000_0000;

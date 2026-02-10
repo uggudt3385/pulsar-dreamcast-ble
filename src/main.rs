@@ -2,7 +2,7 @@
 #![no_main]
 
 use embassy_executor::Spawner;
-use embassy_nrf::gpio::{Flex, Input, Level, Output, OutputDrive, Pull};
+use embassy_nrf::gpio::{Input, Output};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Timer};
@@ -14,6 +14,7 @@ use rtt_target::{rprintln, rtt_init_print};
 use static_cell::StaticCell;
 
 mod ble;
+mod board;
 mod maple;
 
 use crate::ble::{
@@ -31,6 +32,10 @@ static SYNC_MODE: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 /// Signal to toggle device name and reset. Carries new `is_dreamcast` value.
 static NAME_TOGGLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
+
+/// Signal to trigger System Off sleep (XIAO only).
+#[cfg(feature = "board-xiao")]
+static SLEEP_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
 #[allow(clippy::items_after_statements)] // StaticCell pattern requires inline statics
 #[embassy_executor::main]
@@ -85,43 +90,36 @@ async fn main(spawner: Spawner) {
         spawner.spawn(token);
     }
 
-    // LEDs (active low on DK)
-    let led1 = Output::new(p.P0_13, Level::High, OutputDrive::Standard);
-    let mut led2 = Output::new(p.P0_14, Level::High, OutputDrive::Standard);
-    let mut led3 = Output::new(p.P0_15, Level::High, OutputDrive::Standard);
-    let mut led4 = Output::new(p.P0_16, Level::High, OutputDrive::Standard);
+    // Initialize board-specific pins
+    #[cfg(feature = "board-dk")]
+    let (sdcka, sdckb, sync_button, sync_led, mut status) = board::init_pins(
+        p.P0_05, p.P0_06, p.P0_13, p.P0_14, p.P0_15, p.P0_16, p.P0_25,
+    );
+    #[cfg(feature = "board-xiao")]
+    let (sdcka, sdckb, sync_button, sync_led, mut status) = board::init_pins(
+        p.P0_05, p.P0_04, p.P0_26, p.P0_30, p.P0_06, p.P0_29, p.P0_28,
+    );
 
-    // Sync button (Button 4 on DK = P0.25, active low) with LED1 for feedback
-    let sync_button = Input::new(p.P0_25, Pull::Up);
-    if let Ok(token) = sync_button_task(sync_button, led1) {
+    if let Ok(token) = sync_button_task(sync_button, sync_led) {
         spawner.spawn(token);
     }
 
-    // Startup blink (use LED2 since LED1 is owned by sync task)
-    for _ in 0..3 {
-        led2.set_low();
-        Timer::after(Duration::from_millis(100)).await;
-        led2.set_high();
-        Timer::after(Duration::from_millis(100)).await;
-    }
+    status.startup_blink().await;
 
     // Set up Maple Bus using Flex pins
-    let sdcka = Flex::new(p.P0_05);
-    let sdckb = Flex::new(p.P0_06);
     let mut bus = MapleBus::new(sdcka, sdckb);
     let host = MapleHost::new();
 
     // Detect controller (retry with backoff until found)
-    led4.set_low(); // LED4 on = searching
+    status.show_searching();
     let mut retry_delay_ms: u64 = 100;
     loop {
-        led2.set_low();
+        status.tx_activity_on();
         let result = host.request_device_info(&mut bus);
-        led2.set_high();
+        status.tx_activity_off();
 
         if let MapleResult::Ok(_) = &result {
-            led4.set_high(); // LED4 off
-            led3.set_low(); // LED3 on = controller found
+            status.show_controller_found();
             rprintln!("MAPLE: Controller detected");
             break;
         }
@@ -131,10 +129,24 @@ async fn main(spawner: Spawner) {
         retry_delay_ms = (retry_delay_ms * 2).min(1000);
     }
 
+    // Reserve wake pin for sleep (XIAO only, before entering the loop)
+    #[cfg(feature = "board-xiao")]
+    let wake_pin = p.P0_02;
+
     let mut last_state: Option<ControllerState> = None;
     let mut fail_count: u16 = 0;
 
     loop {
+        // Check for sleep request (XIAO only)
+        #[cfg(feature = "board-xiao")]
+        if SLEEP_REQUEST.signaled() {
+            SLEEP_REQUEST.wait().await;
+            rprintln!("MAIN: Sleep requested, entering System Off");
+            unsafe {
+                board::enter_system_off(wake_pin);
+            }
+        }
+
         if let MapleResult::Ok(state) = host.get_condition(&mut bus) {
             if fail_count >= 30 {
                 rprintln!("MAPLE: Controller reconnected");
@@ -177,7 +189,7 @@ async fn softdevice_task(sd: &'static Softdevice) {
 /// - `Idle`: Continue trying bonded device (not discoverable)
 /// - `SyncMode` (60s): Discoverable to all, accepts new pairings
 /// - `Connected`: Active connection
-#[allow(clippy::items_after_statements)]
+#[allow(clippy::items_after_statements, clippy::too_many_lines)]
 #[embassy_executor::task]
 async fn ble_task(
     sd: &'static Softdevice,
@@ -232,8 +244,18 @@ async fn ble_task(
                                 if get_connection_state() == ConnectionState::Reconnecting
                                     && start.elapsed().as_millis() >= RECONNECT_TIMEOUT_MS
                                 {
-                                    rprintln!("BLE: Reconnect timeout, entering idle");
-                                    set_connection_state(ConnectionState::Idle);
+                                    #[cfg(feature = "board-xiao")]
+                                    {
+                                        rprintln!("BLE: Reconnect timeout, entering sleep");
+                                        SLEEP_REQUEST.signal(());
+                                        // Wait for sleep to take effect (main task handles it)
+                                        Timer::after(Duration::from_secs(5)).await;
+                                    }
+                                    #[cfg(not(feature = "board-xiao"))]
+                                    {
+                                        rprintln!("BLE: Reconnect timeout, entering idle");
+                                        set_connection_state(ConnectionState::Idle);
+                                    }
                                 }
                                 Timer::after(Duration::from_millis(500)).await;
                             }
