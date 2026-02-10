@@ -939,3 +939,74 @@ Comprehensive cleanup to achieve zero warnings under `cargo clippy -- -W clippy:
 - `cargo clippy -- -W clippy::all -W clippy::pedantic` — 0 warnings
 - `cargo build` — success
 - `cargo fmt` — clean
+
+---
+
+## 2026-02-09: Connection Hardening
+
+Added reliability features to make the adapter suitable for real gaming sessions.
+
+### Changes Implemented (5 of 6)
+
+**1. Stale Controller Detection**
+- Track consecutive `get_condition` failures in main loop
+- After 30 failures (~500ms), send neutral/centered report to zero out all inputs
+- Logs "Controller lost" and "Controller reconnected" transitions
+
+**2. BLE Notification Error Handling**
+- Track consecutive `send_report` failures (was silently discarded with `let _`)
+- After 10 consecutive failures, break out of notify loop to trigger disconnect handling
+- Prevents zombie connection state where we keep sending to a dead link
+
+**3. Disconnect Reason Logging**
+- `Connection` has no `disconnect_reason()` method — used `gatt_server::run` result instead
+- Now logs which future completed (GATT error vs notify failure) with the error value
+- Example: "BLE: Disconnected (GATT: Err(Disconnected))"
+
+**4. Fast Reconnect Advertising**
+- Added `ReconnectFast` mode: 20ms interval (same as SyncMode) but NOT discoverable
+- Used for first 5 seconds after disconnect for snappy reconnection
+- After 5s, falls back to `Reconnect` mode (100ms interval) to save power
+
+**5. Connection Parameter Update Logging**
+- `sd_ble_gap_conn_param_update` return code now checked and logged on failure
+- Previously fire-and-forget with `let _`
+
+### Controller Detection Retry Loop
+- Previous code: single `request_device_info` attempt, then block forever in `wfi()` loop
+- New code: retries with exponential backoff (100ms → 200ms → ... → 1s cap)
+- LED4 on while searching, LED3 on when found
+- Uses async `Timer::after` so executor keeps running (BLE task, sync button stay responsive)
+- Removed the old blocking `wfi()` reset-button loop entirely
+
+### WDT: Deferred (Not Implemented)
+
+Attempted hardware WDT via raw register writes (base `0x4001_0000`). Removed after
+repeated reset loops during debugging. Key learnings:
+
+- **nRF52840 WDT cannot be stopped once started.** It survives system resets (only
+  cleared by full power-on reset or pin reset).
+- **CONFIG register is write-once.** Once TASKS_START fires, CONFIG/CRV/RREN are locked.
+  If a previous firmware started the WDT with bad config (e.g., `HALT=Run`), reflashing
+  new firmware with `HALT=Pause` has no effect — the old config persists.
+- **`HALT=Run` + debugger = reset loop.** cargo-embed halts the CPU during flash/attach.
+  With HALT=Run, the WDT keeps counting during halt and fires before firmware reaches
+  the feed instruction. This creates an unrecoverable reset loop that requires a full
+  power cycle (USB unplug/replug) to escape.
+- **`HALT=Pause` doesn't help** if a previous boot already locked CONFIG with HALT=Run.
+- **Conclusion:** WDT is a production-only feature. It must be the LAST thing added,
+  and the firmware should feed the WDT as the absolute first instruction (before
+  `rtt_init_print`, before Embassy init) to handle the case where a WDT from a previous
+  boot is still running. Consider gating WDT behind a compile-time feature flag
+  (`#[cfg(feature = "wdt")]`) so development builds never enable it.
+
+### Files Modified
+- `src/main.rs` — stale detection, notify errors, disconnect logging, conn param logging,
+  ReconnectFast usage, controller detection retry loop
+- `src/ble/softdevice.rs` — `ReconnectFast` advertising mode variant + match arm
+
+### Verification
+- `cargo build` — success
+- `cargo clippy -- -W clippy::all -W clippy::pedantic` — 0 warnings
+- Hardware tested: controller detection retry loop works
+- Still needed: unplug controller mid-session, BLE disconnect/reconnect, sustained gameplay

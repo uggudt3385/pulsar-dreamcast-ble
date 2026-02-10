@@ -191,6 +191,8 @@ pub fn set_name_mode(is_dreamcast: bool) {
 pub enum AdvertiseMode {
     /// Sync mode: visible to all devices, fast advertising
     SyncMode,
+    /// Fast reconnect: 20ms interval, not discoverable (first 5s after disconnect)
+    ReconnectFast,
     /// Reconnect mode: only bonded device can connect (not visible to others)
     Reconnect,
 }
@@ -220,6 +222,19 @@ pub async fn advertise(
                 &ADV_DATA_SYNC,
                 config,
                 "BLE: Advertising (SYNC MODE - discoverable)",
+            )
+        }
+        AdvertiseMode::ReconnectFast => {
+            // Fast reconnect: 20ms interval, NOT discoverable (first 5s after disconnect)
+            let config = peripheral::Config {
+                interval: 32, // 32 * 0.625ms = 20ms (fast for quick reconnection)
+                timeout: None,
+                ..Default::default()
+            };
+            (
+                &ADV_DATA_RECONNECT,
+                config,
+                "BLE: Advertising (fast reconnect)",
             )
         }
         AdvertiseMode::Reconnect => {

@@ -111,39 +111,36 @@ async fn main(spawner: Spawner) {
     let mut bus = MapleBus::new(sdcka, sdckb);
     let host = MapleHost::new();
 
-    // Detect controller
-    led2.set_low();
-    let result = host.request_device_info(&mut bus);
-
-    let controller_detected = if let MapleResult::Ok(_) = &result {
+    // Detect controller (retry with backoff until found)
+    led4.set_low(); // LED4 on = searching
+    let mut retry_delay_ms: u64 = 100;
+    loop {
+        led2.set_low();
+        let result = host.request_device_info(&mut bus);
         led2.set_high();
-        led3.set_low();
-        true
-    } else {
-        led2.set_high();
-        led4.set_low();
-        false
-    };
 
-    if !controller_detected {
-        // Button 1 (P0.11) to retry - triggers system reset
-        let reset_button = Input::new(p.P0_11, Pull::Up);
-        loop {
-            if reset_button.is_low() {
-                // Debounce
-                cortex_m::asm::delay(1_000_000);
-                if reset_button.is_low() {
-                    cortex_m::peripheral::SCB::sys_reset();
-                }
-            }
-            cortex_m::asm::wfi();
+        if let MapleResult::Ok(_) = &result {
+            led4.set_high(); // LED4 off
+            led3.set_low(); // LED3 on = controller found
+            rprintln!("MAPLE: Controller detected");
+            break;
         }
+
+        Timer::after(Duration::from_millis(retry_delay_ms)).await;
+        // Back off up to 1 second between retries
+        retry_delay_ms = (retry_delay_ms * 2).min(1000);
     }
 
     let mut last_state: Option<ControllerState> = None;
+    let mut fail_count: u16 = 0;
 
     loop {
         if let MapleResult::Ok(state) = host.get_condition(&mut bus) {
+            if fail_count >= 30 {
+                rprintln!("MAPLE: Controller reconnected");
+            }
+            fail_count = 0;
+
             // Only signal when state changes
             let changed = match &last_state {
                 None => true,
@@ -153,6 +150,13 @@ async fn main(spawner: Spawner) {
             if changed {
                 CONTROLLER_STATE.signal(state);
                 last_state = Some(state);
+            }
+        } else {
+            fail_count = fail_count.saturating_add(1);
+            if fail_count == 30 {
+                rprintln!("MAPLE: Controller lost, sending neutral");
+                CONTROLLER_STATE.signal(ControllerState::default());
+                last_state = None;
             }
         }
 
@@ -210,8 +214,13 @@ async fn ble_task(
                     let start = Instant::now();
 
                     loop {
-                        // Check for sync mode signal
-                        let adv_future = advertise(sd, server, bonder, AdvertiseMode::Reconnect);
+                        // Use fast advertising (20ms) for first 5s, then slow (100ms)
+                        let mode = if start.elapsed().as_millis() < 5000 {
+                            AdvertiseMode::ReconnectFast
+                        } else {
+                            AdvertiseMode::Reconnect
+                        };
+                        let adv_future = advertise(sd, server, bonder, mode);
                         let sync_future = SYNC_MODE.wait();
 
                         match embassy_futures::select::select(adv_future, sync_future).await {
@@ -321,11 +330,14 @@ async fn handle_connection(
             slave_latency: 0,
             conn_sup_timeout: 400, // 4000ms
         };
-        unsafe {
-            let _ = nrf_softdevice::raw::sd_ble_gap_conn_param_update(
+        let rc = unsafe {
+            nrf_softdevice::raw::sd_ble_gap_conn_param_update(
                 handle,
                 (&raw const conn_params).cast_mut(),
-            );
+            )
+        };
+        if rc != 0 {
+            rprintln!("BLE: Conn param update failed: {}", rc);
         }
     }
 
@@ -338,6 +350,7 @@ async fn handle_connection(
         Timer::after(Duration::from_millis(5000)).await;
 
         let mut current_state = ControllerState::default();
+        let mut notify_fails: u8 = 0;
 
         loop {
             // Check for new state (non-blocking via try semantics)
@@ -350,16 +363,31 @@ async fn handle_connection(
             let report = current_state.to_gamepad_report();
             let report_bytes = report.to_bytes();
             let _ = server.hid.report_set(&report_bytes);
-            let _ = server.send_report(&conn, &report);
+            if server.send_report(&conn, &report).is_err() {
+                notify_fails += 1;
+                if notify_fails > 10 {
+                    rprintln!("BLE: Too many notify failures, disconnecting");
+                    break;
+                }
+            } else {
+                notify_fails = 0;
+            }
 
             Timer::after(Duration::from_millis(8)).await;
         }
     };
 
     // Run both until one completes (connection drops)
-    embassy_futures::select::select(gatt_future, notify_future).await;
+    let result = embassy_futures::select::select(gatt_future, notify_future).await;
 
-    rprintln!("BLE: Disconnected");
+    match result {
+        embassy_futures::select::Either::First(gatt_result) => {
+            rprintln!("BLE: Disconnected (GATT: {:?})", gatt_result);
+        }
+        embassy_futures::select::Either::Second(()) => {
+            rprintln!("BLE: Disconnected (notify failure)");
+        }
+    }
 
     // Save system attributes and bond to flash
     bonder.save_sys_attrs(&conn);
