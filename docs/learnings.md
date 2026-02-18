@@ -164,6 +164,24 @@ If you see:    A=0 B=0  → Controller not powered or not connected
 | find_first_edges too small | Frame=garbage, b_trans OK | Use 40 edges, not 10 |
 | Initial state A=0 B=1 | No response (b_trans=0) | Wires swapped - check Red→P0.05, White→P0.06 |
 | Core locked | Flash fails with lock error | `probe-rs erase --chip nRF52840_xxAA --allow-erase-all` |
+| Dev build (no --release) | Controller never responds | Always use `--release` — Embassy GPIO calls not inlined in debug |
+| RTT logging in hot path | Intermittent missed responses | Remove rprintln from TX/RX/polling path |
+
+### 15. Always Build with `--release` for Maple Bus
+Embassy's `Flex::set_high()` / `set_low()` are `#[inline]` wrappers around single OUTSET/OUTCLR register writes. In a release build, these inline to ~1 instruction each. In a **dev build**, `#[inline]` is ignored — each pin toggle becomes 4+ nested function calls (`Flex::set_high → SealedPin::set_high → block() → outset() → write()`), completely destroying TX timing. The controller won't recognize the malformed request.
+
+This was the root cause of the XIAO not working: the DK was always built with `--release`, while the XIAO was accidentally built without it.
+
+```bash
+# CORRECT:
+cargo embed --release --no-default-features --features board-xiao
+
+# WRONG — TX timing broken, controller won't respond:
+cargo embed --no-default-features --features board-xiao
+```
+
+### 16. RTT Logging in Polling Loop Causes Missed Responses
+Each `rprintln!` call costs ~20ms via RTT. In the 60Hz polling loop (~16ms interval), debug logging between TX and RX or in `wait_and_sample()` / `read_packet_bulk()` causes entire responses to be missed. Keep the hot path free of all logging in production builds.
 
 ---
 

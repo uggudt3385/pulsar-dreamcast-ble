@@ -6,7 +6,6 @@
 use crate::maple::gpio_bus::MapleBus;
 use crate::maple::{ControllerState, MaplePacket};
 use heapless::Vec;
-use rtt_target::rprintln;
 
 /// Maple Bus command codes.
 pub mod commands {
@@ -106,10 +105,11 @@ impl MapleHost {
             payload: Vec::new(),
         };
 
-        rprintln!("TX: DeviceInfoRequest");
         bus.write_packet(&packet);
 
-        // Read response using bulk sampling
+        // Read response using bulk sampling — no logging between TX and RX!
+        // The controller responds within ~100µs; any rprintln here (~20ms via RTT)
+        // causes us to miss the entire response.
         let response = bus.read_packet_bulk(self.timeout_cycles);
 
         let Some(pkt) = response else {

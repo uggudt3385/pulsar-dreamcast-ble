@@ -6,9 +6,57 @@ Running log of tests, assumptions, and results for the Dreamcast controller adap
 
 ## Current State
 
-**Date:** 2026-02-10
+**Date:** 2026-02-17
 
-**Status:** Added XIAO nRF52840 board support alongside existing DK. Both boards compile cleanly. DK build unchanged (default). XIAO adds RGB LED, 5V boost control, and auto-sleep after BLE disconnect timeout.
+**Status:** Both DK and XIAO working. XIAO root cause was building without `--release` — Embassy GPIO calls not inlined in debug builds, destroying TX timing.
+
+**See also:** `docs/xiao_debug_log.md` for full XIAO investigation details.
+
+---
+
+## Session: 2026-02-17 (XIAO + DK Maple Bus Debugging)
+
+### DK Baseline (CONFIRMED WORKING)
+
+Flashed DK with current code (includes diagnostics + hot-path fix). Controller detected, BLE works.
+```
+RX: start pattern found (b_trans=5, wait=228)
+RX DECODE: bits=139 a_falls=70 b_falls=69 gaps=0 first_edge=4
+```
+- **139 bits** — first chunk (frame word + ~3 payload words), enough for controller detection
+- **Deterministic** — same result every run, consistent b_trans and timing
+- **NOTE:** 139 bits is less than full 936-bit Device Info Response, but frame word decodes correctly and controller detection succeeds. Previous 937-bit captures included all 7 chunks; current code may stop after first successful frame decode.
+
+### XIAO Investigation
+
+**Problem:** XIAO build captures 20-34 bits. First bits are **random each run** — not a real controller response. Controller never detected.
+
+**Confirmed fix:** Removed rprintln from TX→RX hot path in `host.rs`. Improved XIAO from 10-13 to 20-34 bits.
+
+**Disproved hypotheses:**
+- SoftDevice interrupts (REVERTED — crashed SoftDevice, bits unchanged)
+- MIN_START_TRANSITIONS=6 (REVERTED — no effect, kept at 3)
+- Internal pull-ups Pull::None (REVERTED — no effect)
+- I2C pin IMU interference (board is regular variant, no IMU)
+
+**Root cause found:** XIAO pull-ups wired through a **voltage divider** off 5V to create a 3.3V reference. A voltage divider is high-impedance — can't supply current at 2Mbps edge rates. Signal degrades after ~30 edges as divider sags under load. The XIAO has a `3V3` pin that should be used directly for pull-ups.
+
+### Hardware Setup Clarification
+- **DK**: 47Ω inline resistors on data lines + 4.7kΩ pull-ups to 3.3V (voltage divider from 5V)
+- **XIAO**: No inline resistors + 4.7kΩ pull-ups to direct 3V3 pin
+- **Key difference**: 47Ω inline resistors (present on DK, absent on XIAO)
+- Earlier hypothesis that XIAO's voltage divider pull-ups were the problem was **incorrect** — the DK also uses a voltage divider and works fine
+
+### Changes Kept
+1. **Removed pre-TX and post-TX rprintln** (`src/maple/host.rs`) — verified improvement
+2. **Added edge timing diagnostics** (`src/maple/gpio_bus.rs`) — post-capture only, no hot-path impact
+3. **Auto-enter sync mode** (`src/main.rs`) — when no bond found
+4. **MIN_START_TRANSITIONS = 3** — unchanged from working DK value (per learnings.md)
+
+### Hardware Setup
+- DK: 4.7kΩ pull-ups from data lines to DK 3.3V rail (direct)
+- XIAO: 4.7kΩ pull-ups from data lines through voltage divider off 5V (weak!)
+- Controller powered from DK 5V output
 
 ---
 
@@ -903,12 +951,14 @@ probe-rs erase --chip nRF52840_xxAA --allow-erase-all
 
 **Prevention:** Always ensure probe-rs commands complete or are properly terminated. If a flash hangs, Ctrl+C may not fully release the J-Link - check for orphaned processes.
 
-### Chip Lock / Hard Fault Recovery
+### DK Chip Lock / Hard Fault Recovery
 
-If the chip locks up (hard fault, infinite loop), the debugger may fail to connect. Fix:
+If the DK locks up (hard fault, infinite loop), the debugger may fail to connect. Fix:
 ```bash
 probe-rs erase --chip nRF52840_xxAA --allow-erase-all
 ```
+
+For XIAO recovery, see `docs/xiao_debug_log.md`.
 
 ---
 

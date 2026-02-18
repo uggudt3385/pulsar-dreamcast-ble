@@ -299,11 +299,8 @@ async fn ble_task(
                         }
                     }
                 } else {
-                    // No bonded device - wait for sync mode
-                    rprintln!("BLE: No bond, waiting for sync mode");
-                    set_connection_state(ConnectionState::Idle);
-                    SYNC_MODE.wait().await;
-                    rprintln!("BLE: Sync mode requested (no prior bond)");
+                    // No bonded device - go straight to sync mode
+                    rprintln!("BLE: No bond, auto-entering sync mode");
                     set_connection_state(ConnectionState::SyncMode);
                     None
                 };

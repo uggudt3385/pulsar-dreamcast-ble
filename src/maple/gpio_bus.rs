@@ -114,10 +114,10 @@ impl MapleBus {
             .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
     }
 
-    /// Configure pins as inputs with pull-up.
+    /// Configure pins as inputs without pull-up.
     pub fn set_input_mode(&mut self) {
-        self.sdcka.set_as_input(Pull::Up);
-        self.sdckb.set_as_input(Pull::Up);
+        self.sdcka.set_as_input(Pull::None);
+        self.sdckb.set_as_input(Pull::None);
         // Allow pull-ups to stabilize
         for _ in 0..PULLUP_STABILIZE_NOPS {
             cortex_m::asm::nop();
@@ -456,7 +456,6 @@ impl MapleBus {
             self.decode_bulk_samples(samples, count, skip_samples);
 
         if bits.len() < MIN_DECODE_BITS {
-            // Not enough bits
             return None;
         }
 
