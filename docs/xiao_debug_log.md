@@ -673,3 +673,46 @@ Added `const _: () = assert!(size_of::<IdentityResolutionKey>() == 16);` to catc
 - `src/maple/gpio_bus.rs` — Vec capacity reductions
 - `src/maple/host.rs` — payload Vec capacity 255→32
 - `check.sh` — auto-format instead of check-only
+
+---
+
+## Session: 2026-02-19 (Button Pin, Bond Persistence, Responsiveness)
+
+### Button Pin Move: D7 → D10
+- D7 (P1.12) was shorted to ground on the perfboard — button always read LOW
+- Moved sync/wake button to D10 (P1.15)
+- Updated `src/main.rs` (pin pass), `src/board/xiao.rs` (WAKE_PIN_NUM, docs)
+- Sleep/wake confirmed working on D10
+
+### Bond Persistence Fix
+- Bond was only saved to flash on graceful disconnect (in `handle_connection` after GATT ends)
+- Inactivity timeout called `enter_system_off()` directly, bypassing the save
+- Fix: added a concurrent `bond_save_future` that polls every 1s until pairing completes, then saves
+- On wake, device now reconnects to bonded host automatically
+
+### Name Toggle Fix
+- `NAME_TOGGLE` signal was only checked between connection cycles (top of `ble_task` loop)
+- While connected, the signal was never consumed — triple-press had no effect
+- Fix: `bond_save_future` also polls for `NAME_TOGGLE` after bond save, triggers flash write + reset
+
+### Stale SYNC_MODE Signal Fix
+- `SYNC_MODE` signaled during SyncMode was never consumed in that branch
+- After disconnect → Reconnecting, the stale signal immediately cleared the bond
+- Fix: drain stale signal at top of SyncMode branch
+
+### Stick/Trigger Responsiveness
+- `STICK_CHANGE_THRESHOLD` was 15 (~6% of 0-255 range) — felt sluggish
+- `TRIGGER_CHANGE_THRESHOLD` was 10 (~4%)
+- Both reduced to 2 — much more responsive, deadzone in `to_gamepad_report()` handles noise at center
+
+### Sleep Cleanup
+- LEDs now turn off before entering System Off (direct P0 OUTSET register write)
+- Single "Entering System Off" log line instead of multiple diagnostic logs
+
+### Files Changed
+- `src/board/xiao.rs` — D10 pin, LED off before sleep, simplified sleep entry
+- `src/main.rs` — P1.15 pin, removed bus state diagnostic
+- `src/ble/task.rs` — bond_save_future, name toggle during connection, stale signal drain
+- `src/button.rs` — removed debug logging (pin state, state transitions, press detection)
+- `dc-protocol/src/controller_state.rs` — thresholds 15/10 → 2/2
+- `src/maple/gpio_bus.rs` — fixed clippy cast_lossless warnings
