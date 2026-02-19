@@ -167,8 +167,8 @@ impl MapleBus {
             a_low_count,
             b_low_count,
             transitions,
-            final_a as u8,
-            final_b as u8
+            u8::from(final_a),
+            u8::from(final_b)
         );
 
         // Restore output idle

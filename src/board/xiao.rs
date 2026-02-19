@@ -245,25 +245,16 @@ pub unsafe fn enter_system_off() -> ! {
     const P0_OUTSET: *mut u32 = 0x5000_0508 as *mut u32;
     core::ptr::write_volatile(P0_OUTSET, (1 << 26) | (1 << 30) | (1 << 6));
 
-    rprintln!("SLEEP: Disabling boost converter");
+    rprintln!("SLEEP: Entering System Off");
     disable_boost();
 
     // Configure wake pin: input with pull-up + SENSE LOW
     // P1.15 = PIN_CNF[15] on P1
     let cnf_addr = (P1_BASE + PIN_CNF_OFFSET + WAKE_PIN_NUM * 4) as *mut u32;
-    let cnf_before = core::ptr::read_volatile(cnf_addr);
-    // DIR=Input(0), INPUT=Connected(0), PULL=Pullup(3<<2), SENSE=Low(3<<16)
-    let cnf = (cnf_before & !(0x3 << 16) & !(0x3 << 2)) | (0x3 << 16) | (0x3 << 2);
+    let cnf = core::ptr::read_volatile(cnf_addr);
+    let cnf = (cnf & !(0x3 << 16) & !(0x3 << 2)) | (0x3 << 16) | (0x3 << 2);
     core::ptr::write_volatile(cnf_addr, cnf);
-    let cnf_after = core::ptr::read_volatile(cnf_addr);
-    rprintln!(
-        "SLEEP: P1.{} CNF 0x{:08X} -> 0x{:08X}",
-        WAKE_PIN_NUM,
-        cnf_before,
-        cnf_after
-    );
 
-    // Enter System Off via SoftDevice
     nrf_softdevice::raw::sd_power_system_off();
 
     // Should never reach here

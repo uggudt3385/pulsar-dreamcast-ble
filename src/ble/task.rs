@@ -181,6 +181,7 @@ fn transition_after_disconnect(bonder: &Bonder) {
 }
 
 /// Handle an active BLE connection.
+#[allow(clippy::too_many_lines)]
 async fn handle_connection(
     _sd: &'static Softdevice,
     server: &'static GamepadServer,

@@ -25,20 +25,12 @@ pub async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) 
 
     // Let pull-up settle before reading button state
     Timer::after(Duration::from_millis(100)).await;
-    rprintln!("BTN: pin={}", if button.is_high() { "HIGH" } else { "LOW" });
 
     let mut press_count: u8 = 0;
     let mut first_press_time = Instant::now();
 
-    let mut last_logged_state = ConnectionState::Idle;
     loop {
         let state = get_connection_state();
-
-        // Log state transitions
-        if state != last_logged_state {
-            rprintln!("BTN: state={:?}", state);
-            last_logged_state = state;
-        }
 
         // Update LED based on state
         match state {
@@ -56,7 +48,6 @@ pub async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) 
                 if button.is_low() {
                     Timer::after(Duration::from_millis(100)).await;
                     if button.is_low() {
-                        rprintln!("SYNC: Cancelled by button press");
                         while button.is_low() {
                             Timer::after(Duration::from_millis(50)).await;
                         }
@@ -78,8 +69,6 @@ pub async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) 
             Timer::after(Duration::from_millis(50)).await;
             continue;
         }
-
-        rprintln!("BTN: press detected");
 
         // Button pressed - start timing with LED feedback
         let press_start = Instant::now();

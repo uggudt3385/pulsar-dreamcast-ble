@@ -146,10 +146,6 @@ async fn main(spawner: Spawner) {
     let mut bus = MapleBus::new(sdcka, sdckb);
     let host = MapleHost::new();
 
-    // Check initial bus state (should be A=1, B=0 with external pull-ups)
-    let (a, b) = bus.read_pins();
-    rprintln!("BUS: Initial state A={} B={}", a as u8, b as u8);
-
     // Detect controller (retry with backoff until found)
     status.show_searching();
     let mut retry_delay_ms: u64 = INITIAL_RETRY_DELAY_MS;
