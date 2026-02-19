@@ -147,6 +147,20 @@ async fn main(spawner: Spawner) {
 
     status.startup_blink().await;
 
+    // Log initial charge and battery status
+    #[cfg(feature = "board-xiao")]
+    let initial_charging = {
+        let percent = battery_reader.read_percent().await;
+        let charging = charge_stat.is_low();
+        rprintln!(
+            "PWR: {} {}%",
+            if charging { "Charging" } else { "Not charging" },
+            percent
+        );
+        BATTERY_LEVEL.signal(percent);
+        charging
+    };
+
     // Set up Maple Bus using Flex pins
     let mut bus = MapleBus::new(sdcka, sdckb);
     let host = MapleHost::new();
@@ -206,7 +220,7 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-xiao")]
     let mut battery_read_countdown: u64 = 0; // Force immediate first read
     #[cfg(feature = "board-xiao")]
-    let mut was_charging = false;
+    let mut was_charging = initial_charging;
 
     loop {
         // Check for sleep request (XIAO only)
