@@ -179,7 +179,7 @@ impl<'d> BatteryReader<'d> {
         Self { saadc, enable }
     }
 
-    /// Read battery voltage and return percentage (0-100).
+    /// Read battery voltage and return `(millivolts, percentage)`.
     ///
     /// Enables the voltage divider, takes a sample, disables divider.
     ///
@@ -187,7 +187,7 @@ impl<'d> BatteryReader<'d> {
     /// Battery voltage = ADC voltage * 2 (1:2 divider).
     /// Battery range: 3.0V (empty) to 4.2V (full).
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-    pub async fn read_percent(&mut self) -> u8 {
+    pub async fn read(&mut self) -> (u32, u8) {
         self.enable.set_high();
         // Brief settling time for the voltage divider
         Timer::after(Duration::from_micros(100)).await;
@@ -213,8 +213,7 @@ impl<'d> BatteryReader<'d> {
             ((v_bat_mv - 3000) * 100 / 1200) as u8
         };
 
-        rtt_target::rprintln!("BAT: raw={} v={}mV {}%", raw, v_bat_mv, percent);
-        percent
+        (v_bat_mv, percent)
     }
 }
 

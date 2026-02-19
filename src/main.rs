@@ -58,6 +58,11 @@ const SLEEP_TIMEOUT_MS: u64 = 60_000;
 #[cfg(feature = "board-xiao")]
 const INACTIVITY_TIMEOUT_MS: u64 = 600_000;
 
+/// Low battery cutoff voltage (mV). Enter System Off below this.
+/// 3.2V gives ~5% margin above the 3.0V "empty" threshold.
+#[cfg(feature = "board-xiao")]
+const LOW_BATTERY_CUTOFF_MV: u32 = 3200;
+
 /// Shared controller state between maple and BLE tasks.
 static CONTROLLER_STATE: Signal<CriticalSectionRawMutex, ControllerState> = Signal::new();
 
@@ -71,7 +76,8 @@ static NAME_TOGGLE: Signal<CriticalSectionRawMutex, bool> = Signal::new();
 #[cfg(feature = "board-xiao")]
 static SLEEP_REQUEST: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 
-/// Battery level percentage (0-100), updated periodically on XIAO.
+/// Battery level percentage (0-100) for BLE reporting.
+/// Signals 0xFF when charging (tells BLE task to report "charging" state).
 #[cfg(feature = "board-xiao")]
 static BATTERY_LEVEL: Signal<CriticalSectionRawMutex, u8> = Signal::new();
 
@@ -147,17 +153,14 @@ async fn main(spawner: Spawner) {
 
     status.startup_blink().await;
 
-    // Log initial charge and battery status
+    // Log initial charge status
     #[cfg(feature = "board-xiao")]
     let initial_charging = {
-        let percent = battery_reader.read_percent().await;
         let charging = charge_stat.is_low();
         rprintln!(
-            "PWR: {} {}%",
-            if charging { "Charging" } else { "Not charging" },
-            percent
+            "PWR: {}",
+            if charging { "Charging" } else { "Not charging" }
         );
-        BATTERY_LEVEL.signal(percent);
         charging
     };
 
@@ -216,11 +219,11 @@ async fn main(spawner: Spawner) {
     #[cfg(feature = "board-xiao")]
     let mut last_activity = Instant::now();
     #[cfg(feature = "board-xiao")]
+    let mut was_charging = initial_charging;
+    #[cfg(feature = "board-xiao")]
     const BATTERY_READ_INTERVAL_MS: u64 = 60_000;
     #[cfg(feature = "board-xiao")]
     let mut battery_read_countdown: u64 = 0; // Force immediate first read
-    #[cfg(feature = "board-xiao")]
-    let mut was_charging = initial_charging;
 
     loop {
         // Check for sleep request (XIAO only)
@@ -295,13 +298,6 @@ async fn main(spawner: Spawner) {
 
         #[cfg(feature = "board-xiao")]
         {
-            battery_read_countdown = battery_read_countdown.saturating_sub(POLL_INTERVAL_MS);
-            if battery_read_countdown == 0 {
-                let percent = battery_reader.read_percent().await;
-                BATTERY_LEVEL.signal(percent);
-                battery_read_countdown = BATTERY_READ_INTERVAL_MS;
-            }
-
             // BQ25101 STAT: LOW = charging, HIGH = not charging / full
             let charging = charge_stat.is_low();
             if charging != was_charging {
@@ -311,6 +307,23 @@ async fn main(spawner: Spawner) {
                     rprintln!("CHG: Charging stopped");
                 }
                 was_charging = charging;
+            }
+
+            // Periodic battery read for BLE reporting and low-voltage cutoff
+            battery_read_countdown = battery_read_countdown.saturating_sub(POLL_INTERVAL_MS);
+            if battery_read_countdown == 0 {
+                let (mv, percent) = battery_reader.read().await;
+                // Send 0xFF when charging so BLE task knows not to report %
+                BATTERY_LEVEL.signal(if charging { 0xFF } else { percent });
+                battery_read_countdown = BATTERY_READ_INTERVAL_MS;
+
+                // Low battery cutoff (only when not charging — ADC reads VBUS on USB)
+                if !charging && mv < LOW_BATTERY_CUTOFF_MV {
+                    rprintln!("PWR: Low battery ({}mV), entering System Off", mv);
+                    unsafe {
+                        board::enter_system_off();
+                    }
+                }
             }
         }
 
@@ -560,13 +573,16 @@ async fn handle_connection(
         }
     };
 
-    // Update battery level in BLE service when signaled (XIAO only)
+    // Update battery level in BLE service when signaled (XIAO only).
+    // 0xFF = charging (don't update percentage), otherwise 0-100%.
     #[cfg(feature = "board-xiao")]
     let battery_future = async {
         loop {
             let level = BATTERY_LEVEL.wait().await;
-            let _ = server.battery.battery_level_set(&level);
-            let _ = server.battery.battery_level_notify(&conn, &level);
+            if level != 0xFF {
+                let _ = server.battery.battery_level_set(&level);
+                let _ = server.battery.battery_level_notify(&conn, &level);
+            }
         }
     };
 
