@@ -116,6 +116,11 @@ pub async fn ble_task(
             }
 
             ConnectionState::SyncMode => {
+                // Drain any stale sync signal so it doesn't fire after disconnect
+                if SYNC_MODE.signaled() {
+                    SYNC_MODE.wait().await;
+                }
+
                 // Sync mode: discoverable to all for 60 seconds
                 let start = Instant::now();
 
@@ -247,6 +252,38 @@ async fn handle_connection(
         }
     };
 
+    // Save bond early so it survives unexpected sleep/reset.
+    // Polls until pairing completes and bond data is available, then saves once.
+    let bond_save_future = async {
+        // Wait for pairing to complete (typically 1-3 seconds)
+        for _ in 0..10 {
+            Timer::after(Duration::from_secs(1)).await;
+            bonder.save_sys_attrs(&conn);
+            if let Some((master_id, enc_info, peer_id)) = bonder.get_bond_data() {
+                let sys_attrs = bonder.get_sys_attrs();
+                let _ = crate::ble::flash_bond::save_bond(
+                    flash, &master_id, &enc_info, &peer_id, &sys_attrs,
+                )
+                .await;
+                rprintln!("BLE: Bond saved");
+                break;
+            }
+        }
+        // Keep future alive, checking for name toggle requests
+        loop {
+            if NAME_TOGGLE.signaled() {
+                let new_pref = NAME_TOGGLE.wait().await;
+                rprintln!(
+                    "NAME: Toggling to {}",
+                    if new_pref { "Dreamcast" } else { "Xbox" }
+                );
+                let _ = crate::ble::flash_bond::save_name_preference(flash, new_pref).await;
+                cortex_m::peripheral::SCB::sys_reset();
+            }
+            Timer::after(Duration::from_millis(100)).await;
+        }
+    };
+
     // Update battery level in BLE service when signaled (XIAO only).
     // 0xFF = charging (don't update percentage), otherwise 0-100%.
     #[cfg(feature = "board-xiao")]
@@ -262,9 +299,29 @@ async fn handle_connection(
 
     // Run all until one completes (connection drops)
     #[cfg(feature = "board-xiao")]
-    let result = embassy_futures::select::select3(gatt_future, notify_future, battery_future).await;
+    let result = {
+        let combined = embassy_futures::select::select(
+            embassy_futures::select::select3(gatt_future, notify_future, battery_future),
+            bond_save_future,
+        )
+        .await;
+        match combined {
+            embassy_futures::select::Either::First(inner) => inner,
+            embassy_futures::select::Either::Second(()) => unreachable!(),
+        }
+    };
     #[cfg(not(feature = "board-xiao"))]
-    let result = embassy_futures::select::select(gatt_future, notify_future).await;
+    let result = {
+        let combined = embassy_futures::select::select(
+            embassy_futures::select::select(gatt_future, notify_future),
+            bond_save_future,
+        )
+        .await;
+        match combined {
+            embassy_futures::select::Either::First(inner) => inner,
+            embassy_futures::select::Either::Second(()) => unreachable!(),
+        }
+    };
 
     #[cfg(feature = "board-xiao")]
     match result {

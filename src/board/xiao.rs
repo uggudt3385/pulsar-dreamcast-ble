@@ -3,7 +3,7 @@
 //! Pin assignments:
 //! - SDCKA: P0.05 (D5), SDCKB: P0.03 (D1)
 //! - RGB LED: R=P0.26, G=P0.30, B=P0.06 (all active LOW, internal)
-//! - Sync button: P1.12 (D7, wired to VMU MODE button)
+//! - Sync button: P1.15 (D10, wired to VMU MODE button)
 //! - Wake button: P0.02 (D0, wired to VMU SLEEP button, GPIO SENSE wake)
 //! - Boost SHDN: P0.28 (D2, HIGH=on, LOW=shutdown)
 //! - Battery ADC: P0.31 (internal, via P0.14 enable — future)
@@ -134,8 +134,8 @@ pub fn init_pins(
 const P1_BASE: u32 = 0x5000_0300;
 /// Offset to `PIN_CNF` registers within GPIO peripheral.
 const PIN_CNF_OFFSET: u32 = 0x700;
-/// Wake pin number (P1.12 / D7 — sync button doubles as wake).
-const WAKE_PIN_NUM: u32 = 12;
+/// Wake pin number (P1.15 / D10 — sync button doubles as wake).
+const WAKE_PIN_NUM: u32 = 15;
 
 /// Static storage for the boost converter control pin.
 /// Used during System Off entry to disable 5V output.
@@ -228,7 +228,7 @@ impl<'d> BatteryReader<'d> {
 
 /// Enter System Off mode (deep sleep, ~5µA draw).
 ///
-/// Configures the sync button (D7/P1.12) with GPIO SENSE for wake-on-press,
+/// Configures the sync button (D10/P1.15) with GPIO SENSE for wake-on-press,
 /// disables the 5V boost converter, then enters System Off via `SoftDevice`.
 /// The sync button pin is already configured as input with pull-up by the
 /// sync button task — we just add SENSE to it.
@@ -240,18 +240,28 @@ impl<'d> BatteryReader<'d> {
 pub unsafe fn enter_system_off() -> ! {
     use rtt_target::rprintln;
 
+    // Turn off all LEDs (active low: HIGH = off)
+    // P0 OUTSET register: set P0.26 (R), P0.30 (G), P0.06 (B)
+    const P0_OUTSET: *mut u32 = 0x5000_0508 as *mut u32;
+    core::ptr::write_volatile(P0_OUTSET, (1 << 26) | (1 << 30) | (1 << 6));
+
     rprintln!("SLEEP: Disabling boost converter");
     disable_boost();
 
-    // Add SENSE LOW to the sync button pin (already configured as input with pull-up)
-    // P1.12 = PIN_CNF[12] on P1, SENSE = Low (3)
+    // Configure wake pin: input with pull-up + SENSE LOW
+    // P1.15 = PIN_CNF[15] on P1
     let cnf_addr = (P1_BASE + PIN_CNF_OFFSET + WAKE_PIN_NUM * 4) as *mut u32;
-    let cnf = core::ptr::read_volatile(cnf_addr);
-    // Set SENSE field (bits 17:16) to 3 (Low)
-    let cnf = (cnf & !(0x3 << 16)) | (0x3 << 16);
+    let cnf_before = core::ptr::read_volatile(cnf_addr);
+    // DIR=Input(0), INPUT=Connected(0), PULL=Pullup(3<<2), SENSE=Low(3<<16)
+    let cnf = (cnf_before & !(0x3 << 16) & !(0x3 << 2)) | (0x3 << 16) | (0x3 << 2);
     core::ptr::write_volatile(cnf_addr, cnf);
-
-    rprintln!("SLEEP: Entering System Off");
+    let cnf_after = core::ptr::read_volatile(cnf_addr);
+    rprintln!(
+        "SLEEP: P1.{} CNF 0x{:08X} -> 0x{:08X}",
+        WAKE_PIN_NUM,
+        cnf_before,
+        cnf_after
+    );
 
     // Enter System Off via SoftDevice
     nrf_softdevice::raw::sd_power_system_off();

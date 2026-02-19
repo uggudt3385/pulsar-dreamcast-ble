@@ -119,7 +119,7 @@ async fn main(spawner: Spawner) {
         mut status,
         charge_stat,
     } = board::init_pins(
-        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28, p.P0_13, p.P0_17,
+        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_15, p.P0_28, p.P0_13, p.P0_17,
     );
 
     #[cfg(feature = "board-xiao")]

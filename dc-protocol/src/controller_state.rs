@@ -146,10 +146,10 @@ const XBOX_TRIGGER_MAX: u32 = 1023;
 const DC_TRIGGER_MAX: u32 = 255;
 
 /// Trigger change threshold for `state_changed` detection.
-const TRIGGER_CHANGE_THRESHOLD: i16 = 10;
+const TRIGGER_CHANGE_THRESHOLD: i16 = 2;
 
 /// Stick change threshold for `state_changed` detection.
-const STICK_CHANGE_THRESHOLD: i16 = 15;
+const STICK_CHANGE_THRESHOLD: i16 = 2;
 
 impl ControllerState {
     /// Convert to Xbox One S BLE HID gamepad report.
@@ -554,7 +554,7 @@ mod tests {
             ..Default::default()
         };
         let b = ControllerState {
-            trigger_l: 105, // within threshold of 10
+            trigger_l: 101, // within threshold of 2
             ..Default::default()
         };
         assert!(!a.state_changed(&b));
@@ -567,7 +567,7 @@ mod tests {
             ..Default::default()
         };
         let b = ControllerState {
-            trigger_l: 120, // diff=20 > threshold 10
+            trigger_l: 105, // diff=5 > threshold 2
             ..Default::default()
         };
         assert!(a.state_changed(&b));
@@ -580,13 +580,13 @@ mod tests {
             ..Default::default()
         };
         let b = ControllerState {
-            stick_x: 150, // diff=22 > threshold 15
+            stick_x: 135, // diff=7 > threshold 2
             ..Default::default()
         };
         assert!(a.state_changed(&b));
 
         let c = ControllerState {
-            stick_x: 135, // diff=7 <= threshold 15
+            stick_x: 129, // diff=1 <= threshold 2
             ..Default::default()
         };
         assert!(!a.state_changed(&c));
