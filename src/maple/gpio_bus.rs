@@ -401,10 +401,10 @@ impl MapleBus {
         samples: &[u32],
         count: usize,
         start_sample: usize,
-    ) -> (Vec<u8, 1024>, u32, u32, u32) {
+    ) -> (Vec<u8, 960>, u32, u32, u32) {
         const GAP_THRESHOLD: usize = 50;
 
-        let mut bits: Vec<u8, 1024> = Vec::new();
+        let mut bits: Vec<u8, 960> = Vec::new();
         let mut a_falls: u32 = 0;
         let mut b_falls: u32 = 0;
         let mut gaps_detected: u32 = 0;
@@ -557,7 +557,7 @@ impl MapleBus {
             return None;
         }
 
-        let mut payload: Vec<u32, 255> = Vec::new();
+        let mut payload: Vec<u32, 32> = Vec::new();
         for i in 0..length {
             let offset = 4 + (i * 4);
             let word = u32::from_le_bytes([

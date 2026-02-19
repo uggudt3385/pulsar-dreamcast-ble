@@ -7,6 +7,7 @@ pub mod flash_bond;
 pub mod hid;
 pub mod security;
 pub mod softdevice;
+pub mod task;
 
 pub use hid::GamepadServer;
 pub use security::Bonder;

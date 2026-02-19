@@ -302,21 +302,11 @@ impl ControllerState {
     /// thresholds to avoid noise-triggered updates.
     #[must_use]
     pub fn state_changed(&self, other: &Self) -> bool {
-        if self.buttons.a != other.buttons.a
-            || self.buttons.b != other.buttons.b
-            || self.buttons.x != other.buttons.x
-            || self.buttons.y != other.buttons.y
-            || self.buttons.start != other.buttons.start
-            || self.buttons.dpad_up != other.buttons.dpad_up
-            || self.buttons.dpad_down != other.buttons.dpad_down
-            || self.buttons.dpad_left != other.buttons.dpad_left
-            || self.buttons.dpad_right != other.buttons.dpad_right
-        {
+        if self.buttons.to_raw() != other.buttons.to_raw() {
             return true;
         }
 
-        if (i16::from(self.trigger_l) - i16::from(other.trigger_l)).abs()
-            > TRIGGER_CHANGE_THRESHOLD
+        if (i16::from(self.trigger_l) - i16::from(other.trigger_l)).abs() > TRIGGER_CHANGE_THRESHOLD
             || (i16::from(self.trigger_r) - i16::from(other.trigger_r)).abs()
                 > TRIGGER_CHANGE_THRESHOLD
         {
@@ -396,7 +386,7 @@ mod tests {
         assert!(original.any_pressed());
         let raw = original.to_raw();
         assert_eq!(raw, 0x0FFF); // 12 buttons all set
-        // Invert back to active-low encoding
+                                 // Invert back to active-low encoding
         let restored = ButtonState::from_raw(!raw);
         assert_eq!(original.a, restored.a);
         assert_eq!(original.b, restored.b);

@@ -7,7 +7,7 @@ pub struct MaplePacket {
     pub sender: u8,
     pub recipient: u8,
     pub command: u8,
-    pub payload: Vec<u32, 255>, // up to 255 u32 words
+    pub payload: Vec<u32, 32>, // max 28 words for Device Info, 3 for Get Condition
 }
 
 impl MaplePacket {
@@ -44,7 +44,7 @@ mod tests {
 
     #[test]
     fn frame_word_with_payload() {
-        let mut payload: Vec<u32, 255> = Vec::new();
+        let mut payload: Vec<u32, 32> = Vec::new();
         payload.push(0x0000_0001).ok();
         let packet = MaplePacket {
             sender: 0x00,

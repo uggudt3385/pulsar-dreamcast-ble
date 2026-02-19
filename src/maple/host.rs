@@ -137,7 +137,7 @@ impl MapleHost {
         const MAX_RETRIES: u8 = 3;
 
         for _attempt in 0..MAX_RETRIES {
-            let mut payload: Vec<u32, 255> = Vec::new();
+            let mut payload: Vec<u32, 32> = Vec::new();
             payload.push(functions::CONTROLLER).ok();
 
             let packet = MaplePacket {

@@ -59,11 +59,19 @@ impl StatusLeds {
     }
 }
 
+/// Initialized board pins, ready for use by the main task.
+pub struct BoardPins {
+    pub sdcka: Flex<'static>,
+    pub sdckb: Flex<'static>,
+    pub sync_button: Input<'static>,
+    pub sync_led: Output<'static>,
+    pub status: StatusLeds,
+}
+
 /// Initialize all board-specific pins.
 ///
-/// Returns `(sdcka, sdckb, sync_button, sync_led, status_leds)`.
-/// The sync LED is separated so it can be moved into the sync button task.
-#[allow(clippy::similar_names, clippy::type_complexity)]
+/// The sync LED (LED1) is separated so it can be moved into the sync button task.
+#[allow(clippy::similar_names)]
 pub fn init_pins(
     sdcka_pin: Peri<'static, impl Pin>,
     sdckb_pin: Peri<'static, impl Pin>,
@@ -72,13 +80,7 @@ pub fn init_pins(
     led3_pin: Peri<'static, impl Pin>,
     led4_pin: Peri<'static, impl Pin>,
     button_pin: Peri<'static, impl Pin>,
-) -> (
-    Flex<'static>,
-    Flex<'static>,
-    Input<'static>,
-    Output<'static>,
-    StatusLeds,
-) {
+) -> BoardPins {
     let sdcka = Flex::new(sdcka_pin);
     let sdckb = Flex::new(sdckb_pin);
     let sync_button = Input::new(button_pin, Pull::Up);
@@ -90,5 +92,11 @@ pub fn init_pins(
 
     let status = StatusLeds { led2, led3, led4 };
 
-    (sdcka, sdckb, sync_button, sync_led, status)
+    BoardPins {
+        sdcka,
+        sdckb,
+        sync_button,
+        sync_led,
+        status,
+    }
 }

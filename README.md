@@ -112,8 +112,11 @@ Note: `rprintln!()` takes ~15us per call. Do not use in timing-critical paths (T
 │       ├── hid.rs               # Xbox One S BLE gamepad report
 │       └── packet.rs            # Maple Bus packet construction
 ├── src/
-│   ├── main.rs            # Entry point, polling loop, BLE task
+│   ├── main.rs            # Entry point, Maple Bus polling loop
+│   ├── lib.rs             # Shared signals, constants, module declarations
+│   ├── button.rs          # Sync button task (hold, triple-press)
 │   ├── ble/
+│   │   ├── task.rs        # BLE advertising/connection state machine
 │   │   ├── hid.rs         # GATT service definitions (HID, DeviceInfo, Battery)
 │   │   ├── security.rs    # BLE bonding/pairing
 │   │   ├── flash_bond.rs  # Flash storage for bonds and name preference

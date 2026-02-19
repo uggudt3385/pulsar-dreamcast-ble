@@ -57,9 +57,9 @@ static NAME_DREAMCAST: &[u8] = b"Dreamcast Wireless Controller\0";
 #[allow(clippy::cast_possible_truncation)] // SoftDevice FFI constants are small values
 fn softdevice_config(is_dreamcast: bool) -> nrf_softdevice::Config {
     let (name, name_len) = if is_dreamcast {
-        (NAME_DREAMCAST.as_ptr(), 29u16)
+        (NAME_DREAMCAST.as_ptr(), (NAME_DREAMCAST.len() - 1) as u16)
     } else {
-        (NAME_XBOX.as_ptr(), 24u16)
+        (NAME_XBOX.as_ptr(), (NAME_XBOX.len() - 1) as u16)
     };
 
     nrf_softdevice::Config {
@@ -154,6 +154,10 @@ static ADV_DATA_RECONNECT: [u8; 13] = [
     0x12, 0x18,        // HID Service (0x1812)
     0x0F, 0x18,        // Battery Service (0x180F)
 ];
+
+// Compile-time guards: scan response size must be 1 (length) + 1 (type) + name chars.
+const _: () = assert!(SCAN_DATA_XBOX.len() == NAME_XBOX.len() - 1 + 2); // -1 for NUL, +2 for AD header
+const _: () = assert!(SCAN_DATA_DREAMCAST.len() == NAME_DREAMCAST.len() - 1 + 2);
 
 /// Scan response with device name (Xbox Wireless Controller).
 #[rustfmt::skip]

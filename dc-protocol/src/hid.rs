@@ -187,13 +187,13 @@ mod tests {
     #[test]
     fn to_bytes_triggers() {
         let report = GamepadReport {
-            left_trigger: 1023,  // max 10-bit = 0x03FF
-            right_trigger: 512,  // 0x0200
+            left_trigger: 1023, // max 10-bit = 0x03FF
+            right_trigger: 512, // 0x0200
             ..Default::default()
         };
         let bytes = report.to_bytes();
-        assert_eq!(bytes[8], 0xFF);  // left trigger low
-        assert_eq!(bytes[9], 0x03);  // left trigger high (10-bit)
+        assert_eq!(bytes[8], 0xFF); // left trigger low
+        assert_eq!(bytes[9], 0x03); // left trigger high (10-bit)
         assert_eq!(bytes[10], 0x00); // right trigger low
         assert_eq!(bytes[11], 0x02); // right trigger high
     }

@@ -8,6 +8,9 @@ use embedded_storage_async::nor_flash::NorFlash;
 use nrf_softdevice::ble::{Address, EncryptionInfo, IdentityKey, IdentityResolutionKey, MasterId};
 use nrf_softdevice::Flash;
 
+// Compile-time guard: transmute between IdentityResolutionKey and [u8; 16] requires matching size.
+const _: () = assert!(core::mem::size_of::<IdentityResolutionKey>() == 16);
+
 /// Flash address for bonding storage (last page before 1MB boundary)
 const BOND_FLASH_ADDR: u32 = 0x000F_E000;
 

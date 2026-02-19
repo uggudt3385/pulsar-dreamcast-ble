@@ -67,14 +67,23 @@ impl StatusLeds {
     pub fn tx_activity_off(&mut self) {}
 }
 
+/// Initialized board pins, ready for use by the main task.
+pub struct BoardPins {
+    pub sdcka: Flex<'static>,
+    pub sdckb: Flex<'static>,
+    pub sync_button: Input<'static>,
+    pub sync_led: Output<'static>,
+    pub status: StatusLeds,
+    pub charge_stat: Input<'static>,
+}
+
 /// Initialize all board-specific pins.
-///
-/// Returns `(sdcka, sdckb, sync_button, sync_led, status_leds)`.
 ///
 /// The blue LED channel is passed out as `sync_led` for the sync button task.
 /// The boost converter (SHDN pin) is enabled at init and stored in a static
-/// for later shutdown during sleep.
-#[allow(clippy::similar_names, clippy::type_complexity)]
+/// for later shutdown during sleep. The charge current is set to 100mA (P0.13 LOW)
+/// and the BQ25101 STAT pin (P0.17) is returned for charge status monitoring.
+#[allow(clippy::similar_names)]
 pub fn init_pins(
     sdcka_pin: Peri<'static, impl Pin>,
     sdckb_pin: Peri<'static, impl Pin>,
@@ -85,14 +94,7 @@ pub fn init_pins(
     boost_pin: Peri<'static, impl Pin>,
     charge_pin: Peri<'static, impl Pin>,
     charge_stat_pin: Peri<'static, impl Pin>,
-) -> (
-    Flex<'static>,
-    Flex<'static>,
-    Input<'static>,
-    Output<'static>,
-    StatusLeds,
-    Input<'static>,
-) {
+) -> BoardPins {
     let sdcka = Flex::new(sdcka_pin);
     let sdckb = Flex::new(sdckb_pin);
     let sync_button = Input::new(button_pin, Pull::Up);
@@ -118,7 +120,14 @@ pub fn init_pins(
 
     let status = StatusLeds { led_r, led_g };
 
-    (sdcka, sdckb, sync_button, sync_led, status, charge_stat)
+    BoardPins {
+        sdcka,
+        sdckb,
+        sync_button,
+        sync_led,
+        status,
+        charge_stat,
+    }
 }
 
 /// P1 GPIO base address for register access.

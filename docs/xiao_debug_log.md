@@ -614,3 +614,62 @@ Added `charge_pin` parameter to `init_pins()` in `src/board/xiao.rs`. The pin is
 - P0.13 controls charge current (BQ25101 ISET), P0.17 controls charge LED (STAT)
 - We don't touch P0.17, so charge LED issue is pre-existing / hardware
 - **Still testing:** whether battery actually charges at 100mA despite LED not lighting
+
+---
+
+## Session: 2026-02-19 (Code Review Cleanup)
+
+Ran a 4-persona RALPH code review (Architect, Code Reviewer, Security Auditor, Performance Engineer). Triaged all findings — implemented the valid ones, skipped the rest after analysis.
+
+### Changes Implemented
+
+**1. Simplified `state_changed()` in `dc-protocol/src/controller_state.rs`**
+Replaced 9 individual button field comparisons with a single `self.buttons.to_raw() != other.buttons.to_raw()` check. Cleaner and automatically covers all button fields.
+
+**2. Added `[profile.release]` to `Cargo.toml`**
+- `opt-level = "s"` (size — often faster on Cortex-M due to flash prefetch/I-cache)
+- `lto = "fat"` (critical for inlining timing code across crate boundaries)
+- `codegen-units = 1` (maximum optimization)
+- `debug = 2` (keep debug info for probe-rs)
+
+**3. Broke `main.rs` into modules**
+Extracted ~480 lines from `main.rs` into:
+- `src/ble/task.rs` — BLE advertising/connection state machine + `handle_connection()`
+- `src/button.rs` — sync button monitoring task (hold, triple-press)
+- `src/lib.rs` — shared signals (`CONTROLLER_STATE`, `SYNC_MODE`, `NAME_TOGGLE`, `BATTERY_LEVEL`) and constants moved here so library modules can reference them via `crate::`
+
+`main.rs` now only contains the entry point, Maple Bus polling loop, and `softdevice_task`.
+
+**4. Compile-time size assertion for `transmute` in `flash_bond.rs`**
+Added `const _: () = assert!(size_of::<IdentityResolutionKey>() == 16);` to catch breakage if `nrf-softdevice` changes the struct layout.
+
+**5. Name length safety in `softdevice.rs`**
+- Replaced hardcoded `29u16`/`24u16` with `(NAME_DREAMCAST.len() - 1) as u16` (derived from the actual string)
+- Added const assertions that scan response array sizes match name string lengths
+
+**6. Reduced heapless Vec capacities**
+- `MaplePacket::payload`: `Vec<u32, 255>` → `Vec<u32, 32>` (saves ~900 bytes stack)
+- `decode_bulk_samples` bits: `Vec<u8, 1024>` → `Vec<u8, 960>` (saves ~64 bytes)
+- Overflow is already handled gracefully (silent drop → CRC fail → retry)
+
+### Review Findings Skipped (with rationale)
+
+- **Cache BLE report bytes**: `to_gamepad_report()` + `to_bytes()` costs <1µs. Real Xbox controllers send every connection event without caching.
+- **Early-exit in `decode_bulk_samples`**: Needs full pass for gap detection counters. ~100-200µs per 16ms cycle is negligible.
+- **Third advertising interval tier**: Only a 5-60s window before System Off. Power difference is ~0.5mA vs ~40mA boost converter draw.
+- **Replace `static mut` with Mutex<RefCell>**: Both `BOOST_CONTROL` and `SAMPLE_BUFFER` have well-documented safety invariants. Single-core, no concurrency. Mutex adds overhead with zero practical benefit.
+
+### Files Modified
+- `dc-protocol/src/controller_state.rs` — `state_changed()` simplification
+- `dc-protocol/src/packet.rs` — payload Vec capacity 255→32
+- `Cargo.toml` — `[profile.release]` section
+- `src/lib.rs` — shared signals/constants, new module declarations
+- `src/main.rs` — simplified to polling loop + entry point
+- `src/ble/task.rs` — NEW: extracted BLE task
+- `src/ble/mod.rs` — added `task` module
+- `src/button.rs` — NEW: extracted sync button task
+- `src/ble/flash_bond.rs` — transmute size assertion
+- `src/ble/softdevice.rs` — computed name lengths + const assertions
+- `src/maple/gpio_bus.rs` — Vec capacity reductions
+- `src/maple/host.rs` — payload Vec capacity 255→32
+- `check.sh` — auto-format instead of check-only
