@@ -83,6 +83,7 @@ pub fn init_pins(
     led_b_pin: Peri<'static, impl Pin>,
     button_pin: Peri<'static, impl Pin>,
     boost_pin: Peri<'static, impl Pin>,
+    charge_pin: Peri<'static, impl Pin>,
 ) -> (
     Flex<'static>,
     Flex<'static>,
@@ -105,6 +106,10 @@ pub fn init_pins(
     unsafe {
         BOOST_CONTROL = Some(boost);
     }
+
+    // Set charge current to 100mA (P0.13 LOW on XIAO BQ25101)
+    // Pin config persists after drop — just need to set it once.
+    let _charge = Output::new(charge_pin, Level::Low, OutputDrive::Standard);
 
     let status = StatusLeds { led_r, led_g };
 
@@ -159,9 +164,9 @@ impl<'d> BatteryReader<'d> {
         adc_pin: impl saadc::Input + 'd,
         saadc_peri: Peri<'d, embassy_nrf::peripherals::SAADC>,
         irq: impl embassy_nrf::interrupt::typelevel::Binding<
-            embassy_nrf::interrupt::typelevel::SAADC,
-            saadc::InterruptHandler,
-        > + 'd,
+                embassy_nrf::interrupt::typelevel::SAADC,
+                saadc::InterruptHandler,
+            > + 'd,
     ) -> Self {
         let enable = Output::new(enable_pin, Level::Low, OutputDrive::Standard);
         let channel = saadc::ChannelConfig::single_ended(adc_pin);

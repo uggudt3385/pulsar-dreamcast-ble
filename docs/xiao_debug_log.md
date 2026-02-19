@@ -591,3 +591,26 @@ MAPLE: Controller detected
 - Verify inactivity sleep triggers after 10 min idle (RTT: "Inactivity timeout")
 - Verify wake via sync button after sleep
 - Verify BLE battery level updates (non-100% value in host)
+
+---
+
+## 2026-02-19: Set Charge Current to 100mA
+
+### Problem
+Default BQ25101 charge current is 50mA (P0.13 floating), giving 20+ hour charge time for a 1000mAh LiPo.
+
+### Change
+Set P0.13 LOW at init to select 100mA charge rate (~10 hours for 1000mAh).
+
+Added `charge_pin` parameter to `init_pins()` in `src/board/xiao.rs`. The pin is configured as output LOW and immediately dropped — the GPIO output latch persists the LOW state. No static storage needed since we never change it again.
+
+### Files Modified
+- `src/board/xiao.rs` — Added `charge_pin` param, set output LOW before returning
+- `src/main.rs` — Pass `p.P0_13` to `init_pins()` (XIAO only; DK unchanged)
+
+### Verification
+- Build passes for both XIAO and DK targets
+- Flash XIAO, plug USB — charge LED was NOT lit before or after this change
+- P0.13 controls charge current (BQ25101 ISET), P0.17 controls charge LED (STAT)
+- We don't touch P0.17, so charge LED issue is pre-existing / hardware
+- **Still testing:** whether battery actually charges at 100mA despite LED not lighting

@@ -135,7 +135,7 @@ async fn main(spawner: Spawner) {
     );
     #[cfg(feature = "board-xiao")]
     let (sdcka, sdckb, sync_button, sync_led, mut status) = board::init_pins(
-        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28,
+        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28, p.P0_13,
     );
 
     #[cfg(feature = "board-xiao")]
@@ -170,7 +170,9 @@ async fn main(spawner: Spawner) {
                 break;
             }
             MapleResult::Timeout => rprintln!("MAPLE: Timeout"),
-            MapleResult::UnexpectedResponse(cmd) => rprintln!("MAPLE: Unexpected cmd=0x{:02X}", cmd),
+            MapleResult::UnexpectedResponse(cmd) => {
+                rprintln!("MAPLE: Unexpected cmd=0x{:02X}", cmd);
+            }
         }
 
         // Diagnostic: check bus state after failed attempt (not in hot path)
@@ -690,4 +692,3 @@ async fn sync_button_task(button: Input<'static>, mut led: Output<'static>) {
         Timer::after(Duration::from_millis(100)).await;
     }
 }
-
