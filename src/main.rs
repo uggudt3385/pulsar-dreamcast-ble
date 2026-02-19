@@ -134,8 +134,8 @@ async fn main(spawner: Spawner) {
         p.P0_05, p.P0_06, p.P0_13, p.P0_14, p.P0_15, p.P0_16, p.P0_25,
     );
     #[cfg(feature = "board-xiao")]
-    let (sdcka, sdckb, sync_button, sync_led, mut status) = board::init_pins(
-        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28, p.P0_13,
+    let (sdcka, sdckb, sync_button, sync_led, mut status, charge_stat) = board::init_pins(
+        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28, p.P0_13, p.P0_17,
     );
 
     #[cfg(feature = "board-xiao")]
@@ -182,6 +182,16 @@ async fn main(spawner: Spawner) {
             }
         }
 
+        // Check for sleep request (BLE sync timeout while we're still detecting)
+        #[cfg(feature = "board-xiao")]
+        if SLEEP_REQUEST.signaled() {
+            SLEEP_REQUEST.wait().await;
+            rprintln!("MAIN: Sleep requested during detection, entering System Off");
+            unsafe {
+                board::enter_system_off();
+            }
+        }
+
         Timer::after(Duration::from_millis(retry_delay_ms)).await;
         // Back off up to max delay between retries
         retry_delay_ms = (retry_delay_ms * 2).min(MAX_RETRY_DELAY_MS);
@@ -195,6 +205,8 @@ async fn main(spawner: Spawner) {
     const BATTERY_READ_INTERVAL_MS: u64 = 60_000;
     #[cfg(feature = "board-xiao")]
     let mut battery_read_countdown: u64 = 0; // Force immediate first read
+    #[cfg(feature = "board-xiao")]
+    let mut was_charging = false;
 
     loop {
         // Check for sleep request (XIAO only)
@@ -244,9 +256,10 @@ async fn main(spawner: Spawner) {
                     // Sleep after 60s of failed re-detection (XIAO only)
                     #[cfg(feature = "board-xiao")]
                     if redetect_start.elapsed().as_millis() >= SLEEP_TIMEOUT_MS {
-                        rprintln!("MAPLE: Re-detect timeout, entering sleep");
-                        SLEEP_REQUEST.signal(());
-                        Timer::after(Duration::from_secs(5)).await;
+                        rprintln!("MAPLE: Re-detect timeout, entering System Off");
+                        unsafe {
+                            board::enter_system_off();
+                        }
                     }
 
                     let result = host.request_device_info(&mut bus);
@@ -274,13 +287,25 @@ async fn main(spawner: Spawner) {
                 BATTERY_LEVEL.signal(percent);
                 battery_read_countdown = BATTERY_READ_INTERVAL_MS;
             }
+
+            // BQ25101 STAT: LOW = charging, HIGH = not charging / full
+            let charging = charge_stat.is_low();
+            if charging != was_charging {
+                if charging {
+                    rprintln!("CHG: Charging started");
+                } else {
+                    rprintln!("CHG: Charging stopped");
+                }
+                was_charging = charging;
+            }
         }
 
         #[cfg(feature = "board-xiao")]
         if last_activity.elapsed().as_millis() >= INACTIVITY_TIMEOUT_MS {
-            rprintln!("MAIN: Inactivity timeout (10 min), entering sleep");
-            SLEEP_REQUEST.signal(());
-            Timer::after(Duration::from_secs(5)).await;
+            rprintln!("MAIN: Inactivity timeout (10 min), entering System Off");
+            unsafe {
+                board::enter_system_off();
+            }
         }
 
         Timer::after(Duration::from_millis(POLL_INTERVAL_MS)).await;

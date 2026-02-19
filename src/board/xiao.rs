@@ -84,12 +84,14 @@ pub fn init_pins(
     button_pin: Peri<'static, impl Pin>,
     boost_pin: Peri<'static, impl Pin>,
     charge_pin: Peri<'static, impl Pin>,
+    charge_stat_pin: Peri<'static, impl Pin>,
 ) -> (
     Flex<'static>,
     Flex<'static>,
     Input<'static>,
     Output<'static>,
     StatusLeds,
+    Input<'static>,
 ) {
     let sdcka = Flex::new(sdcka_pin);
     let sdckb = Flex::new(sdckb_pin);
@@ -111,9 +113,12 @@ pub fn init_pins(
     // Pin config persists after drop — just need to set it once.
     let _charge = Output::new(charge_pin, Level::Low, OutputDrive::Standard);
 
+    // BQ25101 STAT pin: LOW = charging, HIGH = not charging / full
+    let charge_stat = Input::new(charge_stat_pin, Pull::Up);
+
     let status = StatusLeds { led_r, led_g };
 
-    (sdcka, sdckb, sync_button, sync_led, status)
+    (sdcka, sdckb, sync_button, sync_led, status, charge_stat)
 }
 
 /// P1 GPIO base address for register access.
