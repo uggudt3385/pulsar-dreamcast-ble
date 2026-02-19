@@ -455,3 +455,84 @@ Need to either add inter-sample delays or switch to on-the-fly decoding for rele
 ### Key Takeaway
 
 **Always use `--release` for the XIAO build.** The Maple Bus protocol is timing-sensitive and relies on Embassy GPIO calls being inlined to single register writes. Dev builds destroy this timing.
+
+---
+
+## Session: 2026-02-18 (Perfboard Build — Pin Short & Power Routing)
+
+### Setup
+- XIAO nRF52840 soldered to perfboard
+- Pololu U1V11F5 boost converter (battery → 5V for controller)
+- 4.7kΩ pull-ups from data lines to 3.3V
+- External SWD flashing via DK J-Link
+
+### Problem: Controller Not Responding on Perfboard
+
+Same XIAO and controller that worked on breadboard the night before. Symptoms:
+- TX visible on scope at controller connector
+- Pull-ups reading 3.2V on data lines
+- Continuity tests passing
+- Two different controllers tried — neither responds
+- `BUS: Initial state A=1 B=1` — **B should be 0** (controller pulls SDCKB LOW at idle)
+
+### Power Routing Discovery
+
+XIAO 3.3V regulator cannot supply enough current for the Pololu boost converter + controller (~200mA+). Battery must feed Pololu VIN directly, not through the XIAO.
+
+**Working power setup:**
+```
+Battery(+) ──── Pololu VIN (direct)
+Battery(+) ──── XIAO BAT+ (through battery pads)
+Battery(-) ──── XIAO BAT- (internally = GND)
+Pololu GND ──── XIAO GND (common ground)
+Controller GND ── XIAO GND (common ground)
+Pololu VOUT ──── Controller 5V (blue wire)
+XIAO D2 (P0.28) ── Pololu SHDN (enable)
+```
+
+### ROOT CAUSE: D4 (P0.04) Shorted to 3.3V
+
+Added `diagnose_bus()` diagnostic — after each failed TX/RX attempt, samples 1000 reads and reports pin activity:
+```
+DIAG: A_low=0/1000 B_low=0/1000 trans=0 final A=1 B=1
+```
+Zero transitions, zero activity. Controller completely invisible.
+
+**Key test:** Manually shorting red wire (SDCKA/D5) to GND → `A_low=1000/1000`, board stayed alive. Shorting white wire (SDCKB/D4) to GND → **board reset/disconnected.**
+
+A 4.7kΩ pull-up to 3.3V should only draw ~0.7mA when grounded. Board resetting means D4 has a **direct short to a power rail** (bypassing the resistor), creating a hard short when grounded.
+
+Further investigation: D2, D3, D4, and D6 all show continuity to 3.3V. These are on the same side of the XIAO. No visible solder bridge — may be underneath the castellated pads or within the perfboard.
+
+### Fix: Moved SDCKB to D1 (P0.03)
+
+Changed SDCKB from D4 (P0.04) to D1 (P0.03):
+- `xiao.rs`: `PIN_B_BIT = 3` (was 4)
+- `main.rs`: Pin assignment `p.P0_03` (was `p.P0_04`)
+- Sync button pin reassigned to `p.P0_04` (non-functional, button physically removed)
+
+Result:
+```
+BUS: Initial state A=1 B=1
+MAPLE: Timeout
+DIAG: A_low=0/1000 B_low=0/1000 trans=0 final A=1 B=1
+MAPLE: Controller detected
+```
+**Controller detected on first retry!**
+
+### Current Pin Mapping (Perfboard)
+| Header | nRF Pin | Use |
+|--------|---------|-----|
+| D0 | P0.02 | Wake button |
+| D1 | P0.03 | **SDCKB** (moved from D4) |
+| D2 | P0.28 | Boost SHDN |
+| D3 | P0.29 | Sync button (physically removed, pin shorted to 3.3V) |
+| D4 | P0.04 | **DEAD — shorted to 3.3V** |
+| D5 | P0.05 | SDCKA |
+| D6 | P0.06 | Blue LED (pin shorted to 3.3V — LED may not work) |
+
+### Lessons Learned
+1. **Perfboard soldering can short adjacent pins** — especially with castellated pad boards like the XIAO. Shorts may be invisible (under the board).
+2. **`diagnose_bus()` is invaluable** — zero transitions immediately pointed to a hardware issue, not software.
+3. **Manual GND short test** differentiates between a pull-up path (safe to short, draws <1mA) and a direct power short (resets board).
+4. **Battery must feed Pololu directly** — XIAO 3.3V regulator browns out under boost converter load.

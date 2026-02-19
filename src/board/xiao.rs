@@ -1,9 +1,9 @@
 //! Board support for the Seeed XIAO nRF52840.
 //!
 //! Pin assignments:
-//! - SDCKA: P0.05 (D5), SDCKB: P0.04 (D4)
+//! - SDCKA: P0.05 (D5), SDCKB: P0.03 (D1)
 //! - RGB LED: R=P0.26, G=P0.30, B=P0.06 (all active LOW, internal)
-//! - Sync button: P0.29 (D3, wired to VMU MODE button)
+//! - Sync button: P1.12 (D7, wired to VMU MODE button)
 //! - Wake button: P0.02 (D0, wired to VMU SLEEP button, GPIO SENSE wake)
 //! - Boost SHDN: P0.28 (D2, HIGH=on, LOW=shutdown)
 //! - Battery ADC: P0.31 (internal, via P0.14 enable — future)
@@ -16,7 +16,7 @@ use embassy_time::{Duration, Timer};
 pub const PIN_A_BIT: u32 = 5; // P0.05 (D5)
 
 /// SDCKB bit position in P0 GPIO register.
-pub const PIN_B_BIT: u32 = 4; // P0.04 (D4)
+pub const PIN_B_BIT: u32 = 3; // P0.03 (D1)
 
 /// Whether this board supports System Off sleep mode.
 #[allow(dead_code)] // Part of board abstraction API
@@ -81,7 +81,7 @@ pub fn init_pins(
     led_g_pin: Peri<'static, impl Pin>,
     led_b_pin: Peri<'static, impl Pin>,
     button_pin: Peri<'static, impl Pin>,
-    _boost_pin: Peri<'static, impl Pin>,
+    boost_pin: Peri<'static, impl Pin>,
 ) -> (
     Flex<'static>,
     Flex<'static>,
@@ -97,13 +97,13 @@ pub fn init_pins(
     let led_g = Output::new(led_g_pin, Level::High, OutputDrive::Standard);
     let sync_led = Output::new(led_b_pin, Level::High, OutputDrive::Standard);
 
-    // // Enable 5V boost converter on startup
-    // let boost = Output::new(boost_pin, Level::High, OutputDrive::Standard);
-    // // Store in static for sleep/shutdown access
-    // // SAFETY: Written once here, read only from main task during sleep entry
-    // unsafe {
-    //     BOOST_CONTROL = Some(boost);
-    // }
+    // Enable 5V boost converter on startup
+    let boost = Output::new(boost_pin, Level::High, OutputDrive::Standard);
+    // Store in static for sleep/shutdown access
+    // SAFETY: Written once here, read only from main task during sleep entry
+    unsafe {
+        BOOST_CONTROL = Some(boost);
+    }
 
     let status = StatusLeds { led_r, led_g };
 

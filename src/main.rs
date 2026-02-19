@@ -124,7 +124,7 @@ async fn main(spawner: Spawner) {
     );
     #[cfg(feature = "board-xiao")]
     let (sdcka, sdckb, sync_button, sync_led, mut status) = board::init_pins(
-        p.P0_05, p.P0_04, p.P0_26, p.P0_30, p.P0_06, p.P0_29, p.P0_28,
+        p.P0_05, p.P0_03, p.P0_26, p.P0_30, p.P0_06, p.P1_12, p.P0_28,
     );
 
     if let Ok(token) = sync_button_task(sync_button, sync_led) {
@@ -137,6 +137,10 @@ async fn main(spawner: Spawner) {
     let mut bus = MapleBus::new(sdcka, sdckb);
     let host = MapleHost::new();
 
+    // Check initial bus state (should be A=1, B=0 with external pull-ups)
+    let (a, b) = bus.read_pins();
+    rprintln!("BUS: Initial state A={} B={}", a as u8, b as u8);
+
     // Detect controller (retry with backoff until found)
     status.show_searching();
     let mut retry_delay_ms: u64 = INITIAL_RETRY_DELAY_MS;
@@ -145,11 +149,18 @@ async fn main(spawner: Spawner) {
         let result = host.request_device_info(&mut bus);
         status.tx_activity_off();
 
-        if let MapleResult::Ok(_) = &result {
-            status.show_controller_found();
-            rprintln!("MAPLE: Controller detected");
-            break;
+        match &result {
+            MapleResult::Ok(_) => {
+                status.show_controller_found();
+                rprintln!("MAPLE: Controller detected");
+                break;
+            }
+            MapleResult::Timeout => rprintln!("MAPLE: Timeout"),
+            MapleResult::UnexpectedResponse(cmd) => rprintln!("MAPLE: Unexpected cmd=0x{:02X}", cmd),
         }
+
+        // Diagnostic: check bus state after failed attempt (not in hot path)
+        bus.diagnose_bus();
 
         Timer::after(Duration::from_millis(retry_delay_ms)).await;
         // Back off up to max delay between retries

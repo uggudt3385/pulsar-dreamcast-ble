@@ -183,6 +183,21 @@ cargo embed --no-default-features --features board-xiao
 ### 16. RTT Logging in Polling Loop Causes Missed Responses
 Each `rprintln!` call costs ~20ms via RTT. In the 60Hz polling loop (~16ms interval), debug logging between TX and RX or in `wait_and_sample()` / `read_packet_bulk()` causes entire responses to be missed. Keep the hot path free of all logging in production builds.
 
+### 17. Power Routing: Battery Direct to Boost Converter
+The XIAO 3.3V regulator cannot supply enough current for the Pololu boost converter + Dreamcast controller (~200mA+). Feeding the Pololu VIN from the XIAO 3.3V rail causes brownouts — the board resets when the controller is plugged in. **Battery must feed Pololu VIN directly.**
+
+### 18. Check for Pin Shorts on Perfboard
+Flux residue or solder bridges (especially under castellated pad boards like the XIAO) can short adjacent pins to power rails. Symptoms:
+- `BUS: Initial state A=1 B=1` (B should be 0 — controller can't pull it LOW against a power short)
+- Board resets when manually grounding the data wire (direct short to 3.3V, not through pull-up resistor)
+
+**Diagnostic test:** Manually short each data wire to GND one at a time:
+- Board stays alive + pin reads LOW → path is through pull-up resistor (correct)
+- Board resets → pin is shorted directly to a power rail (bad)
+
+### 19. diagnose_bus() for Hardware Debugging
+A simple post-TX diagnostic that samples 1000 reads and counts LOW samples + transitions on each line immediately reveals whether the problem is hardware (zero activity = wiring issue) vs software (activity present but decode fails).
+
 ---
 
 ## Expected Working Output

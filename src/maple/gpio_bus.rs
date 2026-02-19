@@ -114,6 +114,69 @@ impl MapleBus {
             .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
     }
 
+    /// Read current pin states (for diagnostics).
+    pub fn read_pins(&mut self) -> (bool, bool) {
+        self.sdcka.set_as_input(Pull::None);
+        self.sdckb.set_as_input(Pull::None);
+        for _ in 0..PULLUP_STABILIZE_NOPS {
+            cortex_m::asm::nop();
+        }
+        let a = self.sdcka.is_high();
+        let b = self.sdckb.is_high();
+        // Restore output mode
+        self.sdcka
+            .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
+        self.sdckb
+            .set_as_output(embassy_nrf::gpio::OutputDrive::Standard);
+        self.sdcka.set_high();
+        self.sdckb.set_low();
+        (a, b)
+    }
+
+    /// Diagnostic: sample the bus briefly and report what we see.
+    /// Call this after TX to check if any activity is present.
+    pub fn diagnose_bus(&mut self) {
+        use rtt_target::rprintln;
+        self.set_input_mode();
+
+        // Quick sample: 1000 reads
+        let mut a_low_count: u32 = 0;
+        let mut b_low_count: u32 = 0;
+        let mut transitions: u32 = 0;
+        let mut last = read_p0_in();
+
+        for _ in 0..1000 {
+            let val = read_p0_in();
+            if val & PIN_A_MASK == 0 {
+                a_low_count += 1;
+            }
+            if val & PIN_B_MASK == 0 {
+                b_low_count += 1;
+            }
+            if (val ^ last) & (PIN_A_MASK | PIN_B_MASK) != 0 {
+                transitions += 1;
+            }
+            last = val;
+        }
+
+        let final_val = read_p0_in();
+        let final_a = (final_val & PIN_A_MASK) != 0;
+        let final_b = (final_val & PIN_B_MASK) != 0;
+        rprintln!(
+            "DIAG: A_low={}/1000 B_low={}/1000 trans={} final A={} B={}",
+            a_low_count,
+            b_low_count,
+            transitions,
+            final_a as u8,
+            final_b as u8
+        );
+
+        // Restore output idle
+        self.set_output_mode();
+        self.sdcka.set_high();
+        self.sdckb.set_low();
+    }
+
     /// Configure pins as inputs without pull-up.
     pub fn set_input_mode(&mut self) {
         self.sdcka.set_as_input(Pull::None);
