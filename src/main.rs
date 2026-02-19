@@ -51,6 +51,9 @@ const TRIGGER_CHANGE_THRESHOLD: i16 = 10;
 /// Stick change threshold for `state_changed` detection.
 const STICK_CHANGE_THRESHOLD: i16 = 15;
 
+/// Timeout before entering sleep when disconnected (ms).
+const SLEEP_TIMEOUT_MS: u64 = 60_000;
+
 /// Shared controller state between maple and BLE tasks.
 static CONTROLLER_STATE: Signal<CriticalSectionRawMutex, ControllerState> = Signal::new();
 
@@ -167,10 +170,6 @@ async fn main(spawner: Spawner) {
         retry_delay_ms = (retry_delay_ms * 2).min(MAX_RETRY_DELAY_MS);
     }
 
-    // Reserve wake pin for sleep (XIAO only, before entering the loop)
-    #[cfg(feature = "board-xiao")]
-    let wake_pin = p.P0_02;
-
     let mut last_state: Option<ControllerState> = None;
     let mut fail_count: u16 = 0;
 
@@ -180,10 +179,10 @@ async fn main(spawner: Spawner) {
         if SLEEP_REQUEST.signaled() {
             SLEEP_REQUEST.wait().await;
             rprintln!("MAIN: Sleep requested, entering System Off");
-            // SAFETY: SoftDevice is initialized, wake pin is valid and unused.
-            // Called from main task context only.
+            // SAFETY: SoftDevice is initialized. Sync button pin already
+            // configured as input — enter_system_off adds SENSE for wake.
             unsafe {
-                board::enter_system_off(wake_pin);
+                board::enter_system_off();
             }
         }
 
@@ -206,9 +205,33 @@ async fn main(spawner: Spawner) {
         } else {
             fail_count = fail_count.saturating_add(1);
             if fail_count == CONTROLLER_LOST_THRESHOLD {
-                rprintln!("MAPLE: Controller lost, sending neutral");
+                rprintln!("MAPLE: Controller lost, re-detecting...");
                 CONTROLLER_STATE.signal(ControllerState::default());
                 last_state = None;
+                status.show_searching();
+
+                // Re-detect controller before resuming polling
+                let mut retry_delay_ms: u64 = INITIAL_RETRY_DELAY_MS;
+                let redetect_start = Instant::now();
+                loop {
+                    // Sleep after 60s of failed re-detection (XIAO only)
+                    #[cfg(feature = "board-xiao")]
+                    if redetect_start.elapsed().as_millis() >= SLEEP_TIMEOUT_MS {
+                        rprintln!("MAPLE: Re-detect timeout, entering sleep");
+                        SLEEP_REQUEST.signal(());
+                        Timer::after(Duration::from_secs(5)).await;
+                    }
+
+                    let result = host.request_device_info(&mut bus);
+                    if let MapleResult::Ok(_) = &result {
+                        rprintln!("MAPLE: Controller re-detected");
+                        status.show_controller_found();
+                        fail_count = 0;
+                        break;
+                    }
+                    Timer::after(Duration::from_millis(retry_delay_ms)).await;
+                    retry_delay_ms = (retry_delay_ms * 2).min(MAX_RETRY_DELAY_MS);
+                }
             }
         }
 
@@ -238,8 +261,6 @@ async fn ble_task(
 ) {
     let mut flash = nrf_softdevice::Flash::take(sd);
 
-    // Reconnect timeout: 60 seconds
-    const RECONNECT_TIMEOUT_MS: u64 = 60_000;
     // Sync mode timeout: 60 seconds
     const SYNC_TIMEOUT_MS: u64 = 60_000;
 
@@ -282,7 +303,7 @@ async fn ble_task(
                                 }
                                 // Check timeout in Reconnecting state
                                 if get_connection_state() == ConnectionState::Reconnecting
-                                    && start.elapsed().as_millis() >= RECONNECT_TIMEOUT_MS
+                                    && start.elapsed().as_millis() >= SLEEP_TIMEOUT_MS
                                 {
                                     #[cfg(feature = "board-xiao")]
                                     {
@@ -317,11 +338,13 @@ async fn ble_task(
                 };
 
                 if let Some(conn) = conn {
-                    // Connected!
                     set_connection_state(ConnectionState::Connected);
                     handle_connection(sd, server, bonder, &mut flash, conn).await;
-                    // After disconnect, go back to reconnecting
-                    set_connection_state(ConnectionState::Reconnecting);
+                    if bonder.has_bond() {
+                        set_connection_state(ConnectionState::Reconnecting);
+                    } else {
+                        set_connection_state(ConnectionState::Idle);
+                    }
                 }
             }
 
@@ -354,7 +377,11 @@ async fn ble_task(
                 if let Some(conn) = conn {
                     set_connection_state(ConnectionState::Connected);
                     handle_connection(sd, server, bonder, &mut flash, conn).await;
-                    set_connection_state(ConnectionState::Reconnecting);
+                    if bonder.has_bond() {
+                        set_connection_state(ConnectionState::Reconnecting);
+                    } else {
+                        set_connection_state(ConnectionState::Idle);
+                    }
                 }
             }
 

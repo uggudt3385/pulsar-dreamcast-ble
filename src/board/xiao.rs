@@ -110,12 +110,12 @@ pub fn init_pins(
     (sdcka, sdckb, sync_button, sync_led, status)
 }
 
-/// P0 GPIO base address for register access.
-const P0_BASE: u32 = 0x5000_0000;
+/// P1 GPIO base address for register access.
+const P1_BASE: u32 = 0x5000_0300;
 /// Offset to `PIN_CNF` registers within GPIO peripheral.
 const PIN_CNF_OFFSET: u32 = 0x700;
-/// Wake pin number (P0.02 / D0).
-const WAKE_PIN_NUM: u32 = 2;
+/// Wake pin number (P1.12 / D7 — sync button doubles as wake).
+const WAKE_PIN_NUM: u32 = 12;
 
 /// Static storage for the boost converter control pin.
 /// Used during System Off entry to disable 5V output.
@@ -139,26 +139,24 @@ pub unsafe fn disable_boost() {
 
 /// Enter System Off mode (deep sleep, ~5µA draw).
 ///
-/// Configures the wake pin (D0/P0.02) with GPIO SENSE for wake-on-press,
+/// Configures the sync button (D7/P1.12) with GPIO SENSE for wake-on-press,
 /// disables the 5V boost converter, then enters System Off via `SoftDevice`.
+/// The sync button pin is already configured as input with pull-up by the
+/// sync button task — we just add SENSE to it.
 ///
 /// On wake, the device performs a full reset (boots fresh).
 ///
 /// # Safety
 /// This function does not return. The `SoftDevice` must be initialized.
-pub unsafe fn enter_system_off(wake_pin: Peri<'static, impl Pin>) -> ! {
+pub unsafe fn enter_system_off() -> ! {
     use rtt_target::rprintln;
 
     rprintln!("SLEEP: Disabling boost converter");
     disable_boost();
 
-    // Configure wake pin with SENSE LOW (button press = LOW)
-    // The pin needs to be configured as input with pull-up and SENSE enabled
-    let _wake = Input::new(wake_pin, Pull::Up);
-
-    // Configure SENSE on the pin via raw register access
-    // P0.02 = pin 2, PIN_CNF[2] needs SENSE = Low (3)
-    let cnf_addr = (P0_BASE + PIN_CNF_OFFSET + WAKE_PIN_NUM * 4) as *mut u32;
+    // Add SENSE LOW to the sync button pin (already configured as input with pull-up)
+    // P1.12 = PIN_CNF[12] on P1, SENSE = Low (3)
+    let cnf_addr = (P1_BASE + PIN_CNF_OFFSET + WAKE_PIN_NUM * 4) as *mut u32;
     let cnf = core::ptr::read_volatile(cnf_addr);
     // Set SENSE field (bits 17:16) to 3 (Low)
     let cnf = (cnf & !(0x3 << 16)) | (0x3 << 16);

@@ -523,13 +523,23 @@ MAPLE: Controller detected
 ### Current Pin Mapping (Perfboard)
 | Header | nRF Pin | Use |
 |--------|---------|-----|
-| D0 | P0.02 | Wake button |
+| D0 | P0.02 | Free (was wake button, no longer needed) |
 | D1 | P0.03 | **SDCKB** (moved from D4) |
 | D2 | P0.28 | Boost SHDN |
-| D3 | P0.29 | Sync button (physically removed, pin shorted to 3.3V) |
+| D3 | P0.29 | **DEAD — shorted to 3.3V** |
 | D4 | P0.04 | **DEAD — shorted to 3.3V** |
 | D5 | P0.05 | SDCKA |
-| D6 | P0.06 | Blue LED (pin shorted to 3.3V — LED may not work) |
+| D6 | P0.06 | Blue LED (shorted to 3.3V — LED may not work) |
+| D7 | P1.12 | Sync button (also wake from System Off) |
+
+### Robustness Improvements
+
+1. **Controller re-detection**: After 30 consecutive poll failures, re-runs `request_device_info()` with backoff instead of polling forever with `get_condition()`.
+2. **Sleep on controller loss**: If re-detection fails for 60s, enters System Off.
+3. **Sleep on BLE reconnect timeout**: If bonded device doesn't reconnect within 60s, enters System Off.
+4. **Sync button = wake button**: D7/P1.12 configured with GPIO SENSE LOW for System Off wake. No dedicated wake button needed — press sync to wake (full reboot).
+5. **Post-disconnect state**: Returns to Reconnecting (if bonded) or Idle (if no bond).
+6. **BLE without bond**: Auto-enters sync mode (discoverable).
 
 ### Lessons Learned
 1. **Perfboard soldering can short adjacent pins** — especially with castellated pad boards like the XIAO. Shorts may be invisible (under the board).
