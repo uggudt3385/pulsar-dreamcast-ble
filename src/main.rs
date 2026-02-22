@@ -226,11 +226,22 @@ async fn main(spawner: Spawner) {
         rprintln!("MAIN: BLE connected, enabling controller");
 
         // --- Phase 2: Enable boost and detect controller ---
+        // Skip boost if USB is providing 5V through Schottky diode passthrough
         #[cfg(feature = "board-xiao")]
-        unsafe {
-            board::enable_boost();
+        let mut usb_powered = board::is_usb_connected();
+        #[cfg(feature = "board-xiao")]
+        if usb_powered {
+            rprintln!("PWR: USB detected, boost off (passthrough)");
+        } else {
+            unsafe {
+                board::enable_boost();
+            }
         }
-        // Brief delay for boost converter startup
+        #[cfg(not(feature = "board-xiao"))]
+        {
+            // DK has no boost — nothing to do
+        }
+        // Brief delay for power source startup
         Timer::after(Duration::from_millis(50)).await;
 
         status.show_searching();
@@ -373,6 +384,23 @@ async fn main(spawner: Spawner) {
 
             #[cfg(feature = "board-xiao")]
             {
+                // Monitor USB state changes — toggle boost accordingly
+                let usb_now = board::is_usb_connected();
+                if usb_now != usb_powered {
+                    usb_powered = usb_now;
+                    if usb_now {
+                        rprintln!("PWR: USB connected, disabling boost (passthrough)");
+                        unsafe {
+                            board::disable_boost();
+                        }
+                    } else {
+                        rprintln!("PWR: USB removed, enabling boost");
+                        unsafe {
+                            board::enable_boost();
+                        }
+                    }
+                }
+
                 let charging = charge_stat.is_low();
                 if charging != was_charging {
                     rprintln!(

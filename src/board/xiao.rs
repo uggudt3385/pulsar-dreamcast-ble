@@ -174,6 +174,17 @@ pub unsafe fn disable_boost() {
     }
 }
 
+/// Check if USB VBUS is present using the nRF52840 POWER peripheral.
+///
+/// When VBUS is detected, the controller can run from USB 5V through the
+/// Schottky diode passthrough, so the boost converter is not needed.
+pub fn is_usb_connected() -> bool {
+    // POWER.USBREGSTATUS register, bit 0 = VBUSDETECT
+    const POWER_USBREGSTATUS: *const u32 = 0x4000_0438 as *const u32;
+    // SAFETY: Read-only register access, always valid on nRF52840
+    (unsafe { core::ptr::read_volatile(POWER_USBREGSTATUS) } & 1) != 0
+}
+
 /// Battery voltage reader using SAADC on P0.31 (AIN7).
 ///
 /// The XIAO has a 1M + 510K voltage divider on P0.31, with P0.14 as the low side.
