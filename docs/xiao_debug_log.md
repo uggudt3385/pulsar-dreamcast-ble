@@ -888,3 +888,27 @@ New constant `DETECT_TIMEOUT_MS = 60_000`. If no controller is found within 60 s
 - System Off current should drop closer to the theoretical ~5µA
 - Device will no longer stay awake indefinitely when BLE connects without a controller
 - Wake via sync button (P1.15 SENSE LOW) is preserved — pin not touched by disconnect changes
+
+---
+
+## Session: 2026-02-23 — Advertising Timeout Fix + Test Plan
+
+### Bug Found During Testing (BLE-06)
+Reconnect timeout (60s → System Off) was never firing. Root cause: `advertise()` in reconnect
+modes had `timeout: None`, so it blocked indefinitely and the elapsed time check never ran.
+
+**Fix:** Added `timeout: Some(1000)` (10s) to `ReconnectFast` and `Reconnect` advertising modes
+in `softdevice.rs`. The 10s timeout causes `advertise()` to return periodically, allowing the
+loop to check elapsed time against `SLEEP_TIMEOUT_MS`.
+
+### Test Results (partial)
+- FUNC-01 through FUNC-09: PASS
+- FUNC-10 (rapid mashing): Known limitation — 60Hz poll rate misses very fast presses
+- FUNC-11: PASS
+- BLE-01 through BLE-13: PASS (BLE-14 through BLE-16 pending — range tests)
+- PWR-01 through PWR-05: PASS
+
+### XIAO Board #1 — VERSION LOCKED
+**SWD clock pad ripped off — board can no longer be reprogrammed.**
+Firmware frozen at commit `683273a` (branch `hardware-capture`).
+This board will be used for remaining testing only. A new XIAO board is needed for further development.
