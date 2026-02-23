@@ -233,9 +233,10 @@ pub async fn advertise(
         }
         AdvertiseMode::ReconnectFast => {
             // Fast reconnect: 20ms interval, NOT discoverable (first 5s after disconnect)
+            // 10s timeout so the task loop can check elapsed time for sleep
             let config = peripheral::Config {
-                interval: 32, // 32 * 0.625ms = 20ms (fast for quick reconnection)
-                timeout: None,
+                interval: 32,        // 32 * 0.625ms = 20ms (fast for quick reconnection)
+                timeout: Some(1000), // 1000 * 10ms = 10s
                 ..Default::default()
             };
             (
@@ -247,9 +248,10 @@ pub async fn advertise(
         AdvertiseMode::Reconnect => {
             // Reconnect mode: Slower advertising, NOT discoverable
             // Device won't appear in Bluetooth scans, but bonded devices can still connect
+            // 10s timeout so the task loop can check elapsed time for sleep
             let config = peripheral::Config {
-                interval: 800, // 800 * 0.625ms = 500ms (saves ~22uA vs 100ms)
-                timeout: None,
+                interval: 800,       // 800 * 0.625ms = 500ms (saves ~22uA vs 100ms)
+                timeout: Some(1000), // 1000 * 10ms = 10s
                 ..Default::default()
             };
             (

@@ -42,13 +42,13 @@ The XIAO nRF52840 has the inductor for REG1 DCDC (confirmed via Zephyr devicetre
 - DCDC is most beneficial when radio is active (saves ~2-3 mA during TX/RX)
 - At idle, the chip auto-switches to LDO refresh mode regardless
 
-### 3. Put QSPI Flash into Deep Power Down (~2-5 mA savings)
+### 3. Put QSPI Flash into Deep Power Down (~2-5 mA savings) — **DONE**
 
 The XIAO has a P25Q16H QSPI flash that draws several mA in standby. We don't use it.
 Seeed forum users report this as the single biggest idle power reduction.
 
-**Implementation:** Send DPD command (0xB9) to flash via QSPI at startup.
-Flash supports DPD with 3 us entry time, 8 us exit time.
+**Implementation:** GPIO bit-bang SPI sends DPD command (0xB9) at startup. CS (P0.25) kept
+driven HIGH to prevent accidental wake. Other QSPI pins (P0.20-24) disconnected.
 
 ### 4. Reduce TX Power (up to ~3 mA savings)
 
@@ -165,15 +165,14 @@ pull-up. This persists during BLE advertising (~5% of idle draw) and even during
 (GPIO state survives System Off on nRF52840 — 140x more than the ~5 uA sleep target).
 
 **Decisions:**
-- **Disconnect Maple Bus pins when not polling** — set to disconnected input via
-  `set_as_disconnected()`. Pull-ups hold both lines at 3.3V, zero current. Saves 0.70 mA
-  during advertising and System Off. **DO THIS (firmware).**
-- **Disconnect pins before System Off** — add raw register writes to `enter_system_off()`
-  for SDCKA (P0.05), SDCKB (P0.03), and charge STAT (P0.17, saves 0.25 mA if charging).
-  MapleBus objects aren't accessible there so use raw PIN_CNF writes (value 0x00000002 =
-  disconnected input, no pull). **DO THIS (firmware).**
+- **Disconnect Maple Bus pins when not polling** — `MapleBus::set_low_power()` disconnects
+  pins when BLE is disconnected. Pull-ups hold both lines at 3.3V, zero current. Saves 0.70 mA
+  during advertising. **DONE.**
+- **Disconnect pins before System Off** — raw PIN_CNF writes in `enter_system_off()` disconnect
+  8 pins (P0.03, .05, .06, .14, .17, .26, .30, .31). Keeps P0.25 (CS HIGH), P0.28 (boost LOW),
+  P0.13 (charge ISET LOW). **DONE.**
 - **Switch TX to HighDrive mode** — `OutputDrive::HighDrive` gives ~121ns rise time vs ~363ns
-  standard. Free signal quality improvement, no power cost. **DO THIS (firmware).**
+  standard. Free signal quality improvement, no power cost. **DONE.**
 - **Test 6.8kΩ and 10kΩ on DK** — could save 0.21-0.37 mA during active polling. Time to VIH
   at 10kΩ is ~1.2 µs, which should fit in the 50-160 µs turnaround gap but needs real testing.
   **TODO: hardware test on DK breadboard.**
@@ -201,15 +200,16 @@ Battery charges at 100 mA with nothing drawing from it.
 - 2x BAT54 or PMEG3010 (SOT-23 SMD Schottky, ~0.23-0.3V drop)
 - Same OR topology, smaller footprint
 
-**Firmware:**
-- Detect USB presence — can infer from BQ25101 STAT pin (LOW = charging = USB present)
-- Caveat: STAT goes HIGH when battery is full even with USB connected. May need a separate
-  VBUS sense GPIO (voltage divider on VBUS → ADC pin) for reliable detection.
-- When USB detected: shut down boost (SHDN LOW), controller runs from VBUS passthrough
-- When USB removed: enable boost normally
+**Firmware — DONE:**
+- Detects USB via nRF52840 `POWER.USBREGSTATUS` register (bit 0 = VBUSDETECT)
+- When USB detected: boost stays off, controller runs from VBUS passthrough
+- When USB removed mid-session: boost re-enables automatically
+- Monitors USB state changes during Phase 3 poll loop
+
+**Hardware — DONE:**
+- 2x 1N5817 Schottky diodes wired on perfboard (cathodes to controller 5V rail)
 
 **Impact:** Tethered play is free — battery charges while playing. Battery-only mode unchanged.
-**TODO: hardware mod (diodes) + firmware VBUS detection + test controller at 4.7V.**
 
 ### Slow Reconnect Advertising — 2026-02-20
 
@@ -220,7 +220,7 @@ connection or 60s timeout.
 Bonded hosts still reconnect within 2-4 seconds. SyncMode (active pairing) stays at 20ms.
 
 **Impact:** ~22 uA savings during slow reconnect phase. Small but free.
-**DO THIS (firmware, one-line change).**
+**DONE — interval set to 800 units (500ms) in `AdvertiseMode::Reconnect`.**
 
 ### HighDrive Mode for Maple Bus TX — 2026-02-20
 
@@ -230,7 +230,7 @@ all SDCKA/SDCKB output mode calls. Drops output impedance from ~1.65kΩ to ~550�
 
 **Impact:** No power savings — purely signal quality. Cleaner edges, more reliable comms,
 and enables future move to higher-resistance pull-ups.
-**DO THIS (firmware, trivial change).**
+**DONE — all SDCKA/SDCKB output calls use `OutputDrive::HighDrive`.**
 
 ### Boost Converter Upgrade — 2026-02-20
 
@@ -253,15 +253,12 @@ Keep CS (P0.25) driven HIGH to prevent the flash from accidentally waking up (kn
 issue — floating CS can glitch LOW and the flash interprets bus noise as a Release command).
 Disconnect the other 5 QSPI pins (P0.20-P0.24, P0.21).
 
-**Implementation:**
-- Raw register writes (no embassy `qspi` feature needed)
-- Called once at startup: after `embassy_nrf::init()`, before SoftDevice init
-- CS stays driven HIGH for the rest of the session (zero current, both ends at 3.3V)
-- Flash stays in DPD through System Off (latched inside flash chip)
-- On fresh boot after wake, DPD is sent again (flash resets to standby on power cycle)
+**Implementation:** GPIO bit-bang SPI (QSPI peripheral was unreliable). Configures CS (P0.25),
+SCK (P0.21), IO0 (P0.20) as outputs, clocks out 0xB9, then disconnects SCK/IO0-IO3 (P0.20-24).
+CS stays driven HIGH to prevent accidental flash wake-up. Called once at startup before SoftDevice.
 
 **Impact:** Saves 2-5 mA in ALL power states. System Off drops from ~2-5 mA to ~5-8 uA.
-**DO THIS (firmware).**
+**DONE — `qspi_flash_deep_power_down()` in `board/xiao.rs`.**
 
 ---
 
@@ -297,19 +294,22 @@ slave_latency=2 is a safe starting point.
 
 ## Implementation Summary — 2026-02-20
 
-### Firmware changes (no hardware required):
-1. **QSPI flash DPD** — raw register writes at startup, saves 2-5 mA always
-2. **Pin disconnect when not polling** — `MapleBus::set_low_power()`, saves 0.7 mA idle
-3. **Pin disconnect before System Off** — raw writes in `enter_system_off()`, saves 0.7 mA sleep
-4. **HighDrive mode for TX** — `OutputDrive::HighDrive` in gpio_bus.rs, signal quality
-5. **Slow reconnect advertising** — 100ms → 500ms interval, saves ~22 uA
+### Firmware changes — ALL DONE:
+1. **Boost gating on BLE connection** — saves ~60-80 mA idle
+2. **REG1 DCDC enable** — free efficiency gain
+3. **QSPI flash DPD** — GPIO bit-bang at startup, saves 2-5 mA always
+4. **Pin disconnect when not polling** — `MapleBus::set_low_power()`, saves 0.7 mA idle
+5. **Pin disconnect before System Off** — 8 pins disconnected in `enter_system_off()`
+6. **HighDrive mode for TX** — `OutputDrive::HighDrive` in gpio_bus.rs, signal quality
+7. **Slow reconnect advertising** — 500ms interval, saves ~22 µA
+8. **USB VBUS detection** — skip boost when on USB power
+9. **Phase 2 controller detection timeout** — 60s, prevents indefinite wake
+10. **All sleep timeouts covered** — advertising (60s), detection (60s), re-detect (60s), inactivity (10min)
 
-Already done:
-- Boost gating on BLE connection (saves ~60-80 mA idle)
-- REG1 DCDC enable (free efficiency)
+### Hardware changes — DONE:
+- **USB 5V passthrough** — 2x 1N5817 Schottky diodes wired + firmware VBUS detection
 
-### Hardware changes (pending):
-- **USB 5V passthrough** — 2x 1N5817 Schottky diodes + firmware VBUS detection
+### Hardware changes — PENDING:
 - **Pull-up resistance testing** — test 6.8kΩ and 10kΩ on DK breadboard
 
 ### Deferred to PCB build:
@@ -332,36 +332,28 @@ Already done:
 Fully charged battery (4.2V) drained to 166mV overnight while supposedly in System Off.
 500mAh / ~8 hours = ~60mA average draw. Way above the ~5-10µA System Off target.
 
-### Most Likely Cause: No Advertising Timeout
+### Root Cause: Phase 2 Controller Detection Had No Timeout — FIXED
 
-The main loop Phase 1 (BLE wait) has **no timeout**. If the device wakes from System Off (button
-press, noise on SENSE pin, or power glitch) and nobody connects via BLE, it advertises at ~1-2mA
-**forever**. At 1.5mA, a 500mAh battery lasts ~14 days — but combined with any other wake/boot
-cycles, this fits the overnight drain pattern.
+The BLE task already had advertising timeouts (60s reconnect → System Off, 60s sync → System Off).
+However, if the Mac (or any bonded host) auto-reconnected via BLE but no controller was plugged in,
+the device entered Phase 2 (controller detection) which retried **forever** with the boost on.
+The device was likely stuck in this loop all weekend, drawing ~15-40mA continuously.
 
-**Fix:** Add an advertising timeout — if no BLE connection within 5 minutes, enter System Off.
+**Fix (commit fe9b511):** Added `DETECT_TIMEOUT_MS = 60_000` — if no controller found within
+60 seconds of BLE connecting, enters System Off.
 
-### Other Possible Contributors
+### Also Fixed: Expanded Pin Disconnect in System Off — DONE
 
-**Pins not disconnected in System Off:**
-- P0.14 (battery divider enable) — if floating/LOW, enables the 1M+510K divider (~2.8µA)
-- P0.13 (charge current set) — dropped immediately after init, may float
-- P0.06, P0.26, P0.30 (LEDs) — set HIGH but not disconnected
-
-**Fix:** Disconnect all unnecessary pins in `enter_system_off()`:
+Previously only 3 pins disconnected (SDCKA, SDCKB, charge STAT). Now disconnects 8 pins:
 ```
-Pins to disconnect: 3, 5, 6, 13, 14, 17, 20, 21, 22, 23, 24, 26, 30
-Keep: P0.25 (QSPI CS, driven HIGH), P0.28 (boost SHDN, driven LOW)
+Disconnected: P0.03, P0.05, P0.06, P0.14, P0.17, P0.26, P0.30, P0.31
+Kept driven: P0.25 (QSPI CS HIGH), P0.28 (boost SHDN LOW), P0.13 (charge ISET LOW)
+Wake source: P1.15 (input with pull-up + SENSE LOW)
 ```
 
-**Charge current pin (P0.13) behavior:** Created as `Output`, immediately dropped. Embassy may
-reset the pin on drop, leaving it floating. BQ25101 ISET behavior with floating input is undefined.
-
-### Action Items
-1. **Add 5-minute advertising timeout** — enter System Off if no BLE connection
-2. **Disconnect all unused GPIO pins** before System Off
-3. **Measure System Off current** with multimeter to verify fix
-4. **Measure active gaming current** to get real battery life numbers
+### Remaining Action Items
+1. **Measure System Off current** with multimeter to verify fix
+2. **Measure active gaming current** to get real battery life numbers
 
 ---
 
@@ -389,7 +381,7 @@ and the battery is protected from damage in all scenarios.
 2. Disconnect battery positive from board
 3. Connect multimeter in series: battery(+) → multimeter(+), multimeter(-) → board BAT(+)
 4. Boot the device, wait for it to start advertising
-5. Enter System Off via 7s hold (or wait for advertising timeout once implemented)
+5. Enter System Off via 7s hold (or wait for 60s advertising timeout)
 6. Read the multimeter — should be **<20µA** for the whole board
 7. If >100µA, something is still drawing power — investigate pin by pin
 

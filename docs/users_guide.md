@@ -74,11 +74,13 @@ Charge the battery by connecting USB to the XIAO board. A USB power brick or pho
 
 ## Sleep & Wake
 
-The adapter enters deep sleep to save battery in three situations:
+The adapter enters deep sleep to save battery in these situations:
 
 1. **Manual sleep** -- hold the sync button for 10 seconds.
-2. **Controller disconnected** for 60 seconds while BLE is connected (re-detect timeout).
-3. **No controller input** for 10 minutes while connected (inactivity timeout).
+2. **No Bluetooth connection** for 60 seconds after power-on (advertising timeout).
+3. **Controller not found** for 60 seconds after Bluetooth connects (detection timeout).
+4. **Controller disconnected** for 60 seconds while BLE is connected (re-detect timeout).
+5. **No controller input** for 10 minutes while connected (inactivity timeout).
 
 When asleep, the adapter draws minimal power (~5 microamps). The battery charges normally from USB while asleep.
 
@@ -115,7 +117,7 @@ When asleep, the adapter draws minimal power (~5 microamps). The battery charges
 
 **Adapter keeps going to sleep**
 - Press the sync button to wake it up.
-- The adapter sleeps after 60 seconds without a Bluetooth connection, or after 10 minutes of no controller input. Keep interacting with the controller to prevent the inactivity timeout.
+- The adapter sleeps after 60 seconds without a Bluetooth connection, 60 seconds if Bluetooth connects but no controller is detected, or after 10 minutes of no controller input. Keep interacting with the controller to prevent the inactivity timeout.
 
 **Inputs feel wrong or mapped incorrectly**
 - The adapter maps Dreamcast buttons to Xbox equivalents. Some hosts may remap these further. Check your host's controller settings.
