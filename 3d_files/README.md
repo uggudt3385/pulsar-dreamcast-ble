@@ -7,6 +7,7 @@ This directory contains 3D models for a VMU-shaped enclosure for the Dreamcast B
 - **`blender_files/`** — Blender source files for the modified VMU enclosure (by alwaysEpic)
 - **`Edited_VMU_stls/`** — Modified STL exports ready for printing (by alwaysEpic)
 - **`VMU_ShellAssembly.step`** — STEP assembly file
+- **`cable_hole_plug.stl`** — Cable hole plug by [byt3swap](https://github.com/byt3swap/dreamwave-enhanced) (used with permission)
 - **`Dreamcast+VMU+Shell.zip`** — KampCreates' original VMU shell model
 
 The original VMU 3D scan archives (`VMU.rar`, `VMUCapScan.rar`) are large binary files and not included in the repository. They are available as assets on the [GitHub Releases](https://github.com/alwaysEpic/pulsar-dreamcast-ble/releases) page to preserve them in case the original sources go offline.
@@ -20,6 +21,7 @@ The front and back halves print best at roughly a 45-degree angle with a few sup
 - **Modified enclosure** (Blender files, edited STLs) by [alwaysEpic](https://github.com/alwaysEpic) — if you use or remix these, please credit the original author
 - **VMU shell recreation** by [KampCreates](https://makerworld.com/en/@KampCreates)
 - **Original VMU 3D scans** by [WeskMods](https://bitbuilt.net/forums/threads/dreamcast-vmu-scan.3988/)
+- **Cable hole plug** by [byt3swap](https://github.com/byt3swap/dreamwave-enhanced) — used with permission
 
 ## License
 

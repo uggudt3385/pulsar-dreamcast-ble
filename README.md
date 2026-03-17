@@ -4,7 +4,7 @@
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)
 
-<!-- TODO: Add photo of assembled adapter with Dreamcast controller -->
+![Pulsar adapter in Dreamcast controller](docs/images/vmu_in_controller.jpeg)
 
 Use your Dreamcast controller wirelessly with any Bluetooth device. Pulsar speaks the Dreamcast's Maple Bus protocol natively and presents itself as a standard Xbox One S BLE gamepad — just plug in, pair, and play.
 
@@ -20,7 +20,7 @@ Use your Dreamcast controller wirelessly with any Bluetooth device. Pulsar speak
 ## Compatibility
 
 ### Controllers
-- Standard Dreamcast controller (first-party and third-party)
+- Standard Dreamcast controller (first-party tested)
 
 ### Hosts
 
@@ -49,9 +49,9 @@ See the full [bill of materials](docs/bill_of_materials.md) for details.
 
 ### Wiring
 
-<!-- TODO: Add wiring diagram image -->
+![Wiring Diagram](docs/wiring/dc_wiring_bb.png)
 
-Connect SDCKA and SDCKB from the controller cable to the XIAO with 10kΩ pull-ups to 3.3V. The controller needs 5V power. See [pin mapping](docs/pin_mapping.md) for the complete wiring reference.
+Connect SDCKA and SDCKB from the controller cable to the XIAO with 10kΩ pull-ups to 3.3V. The controller needs 5V power via a diode OR circuit (USB + boost converter). See [pin mapping](docs/pin_mapping.md) for the complete wiring reference.
 
 ### Flash
 
@@ -86,6 +86,17 @@ See the [user guide](docs/users_guide.md) for more details.
 ### Enclosure
 
 A 3D-printable VMU-shaped case is included in [`3d_files/`](3d_files/). See [3d_files/README.md](3d_files/README.md) for print tips and attribution.
+
+<table>
+  <tr>
+    <td><img src="docs/images/vmu_front.jpeg" width="300" alt="VMU front"></td>
+    <td><img src="docs/images/vmu_back.jpeg" width="300" alt="VMU back"></td>
+  </tr>
+  <tr>
+    <td><img src="docs/images/vmu_opened.jpeg" width="300" alt="Inside the enclosure"></td>
+    <td><img src="docs/images/xiao_board_orientation.jpeg" width="300" alt="XIAO board orientation"></td>
+  </tr>
+</table>
 
 ## For Developers
 

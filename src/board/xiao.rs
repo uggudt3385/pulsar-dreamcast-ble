@@ -237,19 +237,56 @@ impl<'d> BatteryReader<'d> {
         // Combined: v_bat_mv = raw * 3600 * 1510 / (4095 * 510) ≈ raw * 10663 / 4095
         let v_bat_mv = (u64::from(raw) * 10_663 / 4095) as u32;
 
-        // LiPo: 3000mV = 0%, 4200mV = 100%
-        let percent = if v_bat_mv <= 3000 {
-            0
-        } else if v_bat_mv >= 4200 {
-            100
-        } else {
-            ((v_bat_mv - 3000) * 100 / 1200) as u8
-        };
+        let percent = lipo_voltage_to_percent(v_bat_mv);
 
         rtt_target::rprintln!("BAT: {}mV {}%", v_bat_mv, percent);
 
         (v_bat_mv, percent)
     }
+}
+
+/// Convert battery voltage (mV) to percentage using a LiPo discharge curve.
+///
+/// Based on a typical single-cell LiPo discharge profile. The curve is
+/// relatively flat from 3.7-3.9V and drops steeply below 3.5V.
+/// Table entries: (millivolts, percentage).
+#[allow(clippy::cast_possible_truncation)]
+fn lipo_voltage_to_percent(mv: u32) -> u8 {
+    // Voltage-to-percent lookup based on typical LiPo discharge curve
+    const TABLE: [(u32, u8); 11] = [
+        (4200, 100),
+        (4100, 90),
+        (4000, 80),
+        (3900, 60),
+        (3800, 40),
+        (3700, 30),
+        (3600, 20),
+        (3500, 15),
+        (3400, 10),
+        (3300, 5),
+        (3000, 0),
+    ];
+
+    if mv >= TABLE[0].0 {
+        return 100;
+    }
+    if mv <= TABLE[TABLE.len() - 1].0 {
+        return 0;
+    }
+
+    // Linear interpolation between table entries
+    for i in 0..TABLE.len() - 1 {
+        let (v_hi, p_hi) = TABLE[i];
+        let (v_lo, p_lo) = TABLE[i + 1];
+        if mv >= v_lo {
+            let range_mv = v_hi - v_lo;
+            let range_pct = u32::from(p_hi) - u32::from(p_lo);
+            let offset = mv - v_lo;
+            return (u32::from(p_lo) + offset * range_pct / range_mv) as u8;
+        }
+    }
+
+    0
 }
 
 /// Disconnect all GPIO pins to clear bootloader residue.

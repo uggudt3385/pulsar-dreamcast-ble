@@ -8,7 +8,7 @@
 | Dreamcast controller | 1 | Only tested with OEM controller | |
 | Pololu U1V11F5 5V boost | 1 | Has SHDN pin for power gating | [Pololu](https://www.pololu.com/product/2562) |
 | 1N5817 Schottky diodes | 2 | USB/boost OR circuit for 5V rail | [DigiKey](https://www.digikey.com/en/products/detail/diodes-incorporated/1N5817-T/22052) |
-| 10kΩ resistors | 2 | Pull-ups for SDCKA and SDCKB | |
+| 10kΩ resistors | 2 | Pull-ups for SDCKA and SDCKB (4.7kΩ also works) | |
 | LiPo battery (1000mAh) | 1 | 3.7V, JST PH 2.0mm, ~8 hr runtime | [DigiKey](https://www.digikey.com/en/products/filter/battery-packs/89) |
 | Perfboard | 1 | Used: Adafruit Perma-Proto quarter-size | [Adafruit](https://www.adafruit.com/product/589) |
 | Wire | — | 30 AWG or similar | |
@@ -32,9 +32,19 @@ The hardware below is only needed for RTT debug logging or if you need to restor
 |-----------|----------|-------|------|
 | nRF52840 DK | 1 | Built-in J-Link, no extra programmer needed | [Nordic](https://www.nordicsemi.com/Products/Development-hardware/nrf52840-dk) |
 | Dreamcast controller | 1 | | |
-| 10kΩ resistors | 2 | Pull-ups for SDCKA and SDCKB | |
+| 10kΩ resistors | 2 | Pull-ups for SDCKA and SDCKB (4.7kΩ also works) | |
 | Jumper wires | 4+ | 5V, GND, SDCKA, SDCKB | |
 | 5V power supply | 1 | For controller (DK only outputs 3.3V) | |
+
+## Tools & Supplies
+
+| Item | Notes |
+|------|-------|
+| Soldering iron + solder | For perfboard assembly and wire connections |
+| Wire strippers | For 30 AWG wire |
+| Hi-temp masking tape (Kapton) | Useful for insulating connections and holding parts during assembly |
+| Multimeter | For verifying connections and checking voltages |
+| Heat shrink tubing | For insulating solder joints on the controller cable |
 
 ## Optional
 

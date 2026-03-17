@@ -35,7 +35,7 @@ This runs formatting, maple-protocol unit tests, clippy lints, and release build
 
 ## Submitting Changes
 
-1. Fork the repo and create a branch from `main`
+1. Fork the repo and create a branch from `master`
 2. Make your changes — keep commits focused and incremental
 3. Run `./scripts/ci.sh` and ensure it passes
 4. Open a pull request with a clear description of what and why

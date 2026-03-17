@@ -10,5 +10,4 @@ vendor/
 *.rar
 *.hex
 *.uf2
-uf2conv.py
-uf2families.json
+tools/
