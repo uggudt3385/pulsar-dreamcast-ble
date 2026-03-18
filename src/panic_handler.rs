@@ -148,8 +148,8 @@ pub fn check_panic_log() {
 
     if len > 0 {
         let msg_slice = unsafe { core::slice::from_raw_parts(msg_base, len) };
-        if let Ok(msg) = core::str::from_utf8(msg_slice) {
-            crate::log!("{}", msg);
+        if let Ok(_msg) = core::str::from_utf8(msg_slice) {
+            crate::log!("{}", _msg);
         } else {
             crate::log!("(panic message was not valid UTF-8)");
         }

@@ -153,35 +153,35 @@ impl MapleBus {
         self.set_input_mode();
 
         // Quick sample: 1000 reads
-        let mut a_low_count: u32 = 0;
-        let mut b_low_count: u32 = 0;
-        let mut transitions: u32 = 0;
+        let mut _a_low_count: u32 = 0;
+        let mut _b_low_count: u32 = 0;
+        let mut _transitions: u32 = 0;
         let mut last = read_p0_in();
 
         for _ in 0..1000 {
             let val = read_p0_in();
             if val & PIN_A_MASK == 0 {
-                a_low_count += 1;
+                _a_low_count += 1;
             }
             if val & PIN_B_MASK == 0 {
-                b_low_count += 1;
+                _b_low_count += 1;
             }
             if (val ^ last) & (PIN_A_MASK | PIN_B_MASK) != 0 {
-                transitions += 1;
+                _transitions += 1;
             }
             last = val;
         }
 
         let final_val = read_p0_in();
-        let final_a = (final_val & PIN_A_MASK) != 0;
-        let final_b = (final_val & PIN_B_MASK) != 0;
+        let _final_a = (final_val & PIN_A_MASK) != 0;
+        let _final_b = (final_val & PIN_B_MASK) != 0;
         log!(
             "DIAG: A_low={}/1000 B_low={}/1000 trans={} final A={} B={}",
-            a_low_count,
-            b_low_count,
-            transitions,
-            u8::from(final_a),
-            u8::from(final_b)
+            _a_low_count,
+            _b_low_count,
+            _transitions,
+            u8::from(_final_a),
+            u8::from(_final_b)
         );
 
         // Restore output idle

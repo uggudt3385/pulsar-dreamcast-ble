@@ -220,7 +220,7 @@ pub async fn advertise(
     bonder: &'static Bonder,
     mode: AdvertiseMode,
 ) -> Result<Connection, peripheral::AdvertiseError> {
-    let (adv_data, config, log_msg) = match mode {
+    let (adv_data, config, _log_msg) = match mode {
         AdvertiseMode::SyncMode => {
             // Sync mode: Fast advertising, discoverable, no timeout
             let config = peripheral::Config {
@@ -283,7 +283,7 @@ pub async fn advertise(
         AdvertiseMode::Reconnect => 2,
     };
     if LAST_ADV_MODE.swap(mode_id, core::sync::atomic::Ordering::Relaxed) != mode_id {
-        log!("{}", log_msg);
+        log!("{}", _log_msg);
     }
 
     peripheral::advertise_pairable(sd, adv, &config, bonder).await

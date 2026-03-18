@@ -341,8 +341,8 @@ async fn handle_connection(
         match combined.await {
             embassy_futures::select::Either3::First(inner) => {
                 match inner {
-                    embassy_futures::select::Either3::First(gatt_result) => {
-                        log!("BLE: Disconnected (GATT: {:?})", gatt_result);
+                    embassy_futures::select::Either3::First(_gatt_result) => {
+                        log!("BLE: Disconnected (GATT: {:?})", _gatt_result);
                     }
                     embassy_futures::select::Either3::Second(()) => {
                         log!("BLE: Disconnected (notify failure)");
@@ -368,8 +368,8 @@ async fn handle_connection(
         match combined.await {
             embassy_futures::select::Either3::First(inner) => {
                 match inner {
-                    embassy_futures::select::Either::First(gatt_result) => {
-                        log!("BLE: Disconnected (GATT: {:?})", gatt_result);
+                    embassy_futures::select::Either::First(_gatt_result) => {
+                        log!("BLE: Disconnected (GATT: {:?})", _gatt_result);
                     }
                     embassy_futures::select::Either::Second(()) => {
                         log!("BLE: Disconnected (notify failure)");

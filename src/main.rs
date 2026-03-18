@@ -300,8 +300,8 @@ async fn main(spawner: Spawner) {
                         timeout_logged = true;
                     }
                 }
-                MapleResult::UnexpectedResponse(cmd) => {
-                    log!("MAPLE: Unexpected cmd=0x{:02X}", cmd);
+                MapleResult::UnexpectedResponse(_cmd) => {
+                    log!("MAPLE: Unexpected cmd=0x{:02X}", _cmd);
                 }
             }
 
